@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- **Filters on the history list**: All, Text, Links, Images and Pinned. They combine with search.
+- **Keyboard control on desktop.** The search field takes focus when the window opens and keeps it: the arrow keys move a selection through the list, Enter copies it, Shift+Enter previews it, `⌘1` to `⌘9` (Ctrl on Windows and Linux) copy by position, `⌘P` pins, `⌘⌫` deletes while the search is empty, and Esc clears the search and then hides the window. The keyboard button beside *Sync now* lists them.
+- **Clip preview**: the whole clip, with character, word and line counts. *Copy as* puts a rewritten version on the clipboard (one line, trimmed, upper or lower case) without adding it to history. Open it from a clip's menu, with Shift+Enter, or by long-pressing on a phone.
+- Search matches are highlighted in the list, and a clip that is only a colour code (`#2563eb`, `rgb(37 99 235)`) shows the colour instead of the text icon.
+- **Recent clips in the tray menu**: the five newest, picked with one click. *Settings → Desktop → Recent clips in tray menu* turns it off.
+- **Hide after copying** (*Settings → Desktop*): copying from history closes the window, so the hotkey, pick and paste loop needs no mouse.
+
 ## [0.4.1] - 2026-09-23
 
 ### Added

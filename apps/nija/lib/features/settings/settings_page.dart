@@ -199,6 +199,24 @@ class SettingsPage extends ConsumerWidget {
                         await shell?.setHotkeyEnabled(enabled: v);
                       },
                     ),
+                    SwitchRow(
+                      icon: Icons.keyboard_return_rounded,
+                      title: 'Hide after copying',
+                      subtitle:
+                          'Close the window once a clip is copied from history, ready to paste',
+                      value: s.hideAfterCopy,
+                      onChanged: (v) =>
+                          notifier.update((x) => x.copyWith(hideAfterCopy: v)),
+                    ),
+                    SwitchRow(
+                      icon: Icons.format_list_bulleted_rounded,
+                      title: 'Recent clips in tray menu',
+                      subtitle:
+                          'Show the five newest clips in the tray menu; choose one to copy it',
+                      value: s.trayRecents,
+                      onChanged: (v) =>
+                          notifier.update((x) => x.copyWith(trayRecents: v)),
+                    ),
                   ],
                 ),
               SectionCard(

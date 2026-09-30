@@ -12,6 +12,7 @@ import 'package:nija/data/settings/app_settings.dart';
 import 'package:nija/features/sync/sync_controller.dart';
 import 'package:nija/platform/desktop_shell.dart';
 import 'package:nija/providers.dart';
+import 'package:nija_core/nija_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Wires services and runs the app.
@@ -60,6 +61,8 @@ Future<void> bootstrap(List<String> args) async {
           onTogglePause: () => app
               .read(settingsProvider.notifier)
               .update((s) => s.copyWith(capturePaused: !s.capturePaused)),
+          onCopyClip: (item) =>
+              app.read(syncControllerProvider.notifier).copyToClipboard(item),
         )
       : null;
 
@@ -79,6 +82,13 @@ Future<void> bootstrap(List<String> args) async {
     hotkeyEnabled: settings.hotkeyEnabled,
     paused: settings.capturePaused,
   );
+  if (shell != null) {
+    app.listen<AsyncValue<List<ClipItem>>>(
+      trayRecentsProvider,
+      (_, next) => unawaited(shell.setRecent(next.value ?? const [])),
+      fireImmediately: true,
+    );
+  }
   log.i('started on ${PlatformInfo.name} as ${settings.deviceName}');
   unawaited(_loadSecretsAndStart(app, settings));
 }

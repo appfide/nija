@@ -122,11 +122,13 @@ class DriftLocalStore implements LocalStore {
       .into(db.clipItems)
       .insert(_toCompanion(item, synced: false, pinned: false));
 
-  /// Live history, newest first, optionally filtered by [query]. Targeted
-  /// copies this device *sent* to another device are hidden (they are
-  /// duplicates of the original); targeted items *received* are shown.
+  /// Live history, newest first, optionally narrowed by [query] and
+  /// [filter]. Targeted copies this device *sent* to another device are
+  /// hidden (they are duplicates of the original); targeted items
+  /// *received* are shown.
   Stream<List<HistoryEntry>> watchHistory({
     String query = '',
+    HistoryFilter filter = HistoryFilter.all,
     int limit = 500,
     String? ownDeviceId,
   }) {
@@ -146,6 +148,16 @@ class DriftLocalStore implements LocalStore {
       q.where(
         (t) => t.content.like('%${query.trim()}%') & t.encrypted.equals(false),
       );
+    }
+    switch (filter) {
+      case HistoryFilter.all:
+        break;
+      case HistoryFilter.pinned:
+        q.where((t) => t.pinned.equals(true));
+      case HistoryFilter.text:
+      case HistoryFilter.links:
+      case HistoryFilter.images:
+        q.where((t) => t.contentType.isIn(filter.types.map((c) => c.wire)));
     }
     return q.watch().map(
       (rows) => rows
@@ -250,6 +262,32 @@ class DriftLocalStore implements LocalStore {
     pinned: Value(pinned),
     targetDeviceId: Value(i.targetDeviceId),
   );
+}
+
+/// Narrows the history list to one kind of clip.
+enum HistoryFilter {
+  /// Everything.
+  all('All', []),
+
+  /// Plain text and HTML.
+  text('Text', [ClipContentType.text, ClipContentType.html]),
+
+  /// Single URLs.
+  links('Links', [ClipContentType.url]),
+
+  /// Images.
+  images('Images', [ClipContentType.image]),
+
+  /// Pinned items of any kind.
+  pinned('Pinned', []);
+
+  const HistoryFilter(this.label, this.types);
+
+  /// Chip label.
+  final String label;
+
+  /// Content types this filter keeps; empty when it does not filter by type.
+  final List<ClipContentType> types;
 }
 
 /// A history row with local-only flags.

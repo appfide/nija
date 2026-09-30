@@ -218,6 +218,12 @@ Future<AppDatabase> _seededDb() async {
       ago: const Duration(hours: 1),
     ),
     _clip(
+      '9',
+      '#2563eb',
+      device: 'MacBook Pro',
+      ago: const Duration(minutes: 30),
+    ),
+    _clip(
       '4',
       'Meeting moved to 15:30, same room. Bring the packaging checklist.',
       device: 'iPhone',

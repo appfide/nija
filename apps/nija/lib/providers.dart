@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:nija/core/platform_info.dart';
 import 'package:nija/data/local/database.dart';
 import 'package:nija/data/local/local_store.dart';
 import 'package:nija/data/settings/app_settings.dart';
@@ -134,15 +135,53 @@ class HistoryQuery extends Notifier<String> {
   set query(String q) => state = q;
 }
 
+/// Which kind of clip the history list shows.
+final historyFilterProvider =
+    NotifierProvider<HistoryFilterNotifier, HistoryFilter>(
+      HistoryFilterNotifier.new,
+    );
+
+/// Filter notifier.
+class HistoryFilterNotifier extends Notifier<HistoryFilter> {
+  @override
+  HistoryFilter build() => HistoryFilter.all;
+
+  /// Current filter.
+  HistoryFilter get filter => state;
+
+  /// Sets the filter.
+  set filter(HistoryFilter f) => state = f;
+}
+
 /// Live history rows.
 final historyProvider = StreamProvider<List<HistoryEntry>>(
   (ref) => ref
       .watch(localStoreProvider)
       .watchHistory(
         query: ref.watch(historyQueryProvider),
+        filter: ref.watch(historyFilterProvider),
         ownDeviceId: ref.watch(settingsProvider.select((s) => s.deviceId)),
       ),
 );
+
+/// The newest readable clips for the tray menu; empty when the setting is
+/// off or there is no tray.
+final trayRecentsProvider = StreamProvider<List<ClipItem>>((ref) {
+  final enabled = ref.watch(settingsProvider.select((s) => s.trayRecents));
+  if (!enabled || !PlatformInfo.isDesktop) return Stream.value(const []);
+  return ref
+      .watch(localStoreProvider)
+      .watchHistory(
+        limit: 5,
+        ownDeviceId: ref.watch(settingsProvider.select((s) => s.deviceId)),
+      )
+      .map(
+        (rows) => [
+          for (final r in rows)
+            if (!r.item.encrypted && r.item.content.isNotEmpty) r.item,
+        ],
+      );
+});
 
 /// Unsynced row count.
 final pendingCountProvider = StreamProvider<int>(

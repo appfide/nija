@@ -15,6 +15,7 @@ Clipboard history that syncs across **macOS, Windows, Linux, Android and iOS** t
 - **End-to-end encryption** (optional): Argon2id-derived AES-256-GCM; the database only ever sees ciphertext.
 - **Desktop-native**: runs in the tray, global hotkey, start at login.
 - **Devices**: pair a new device with a PIN-protected QR code, give it a role (send-only / receive-only), temporary access, block or remove it, or send a clip to one device only. See [`docs/devices.md`](docs/devices.md).
+- **Fast to use**: filter history by text, links, images or pinned; drive it from the keyboard (arrows and Enter, `⌘1` to `⌘9`, `⇧Enter` to preview); preview any clip in full with character, word and line counts, and copy it back as one line, trimmed, or in another case. Colour codes show a swatch, and the newest clips sit in the tray menu one click away.
 - **Privacy filters**: honours password-manager "do not record" hints, can skip anything that looks like a key or token, and capture can be paused from the tray.
 - **Get it on the next device**: *About → Get it on your other devices* lists the current release's installer for macOS, Windows, Linux, Android and iOS, with a QR code per link so a phone can scan it straight off the desktop screen.
 - **Local-only mode**: works as a plain clipboard manager with no database at all.

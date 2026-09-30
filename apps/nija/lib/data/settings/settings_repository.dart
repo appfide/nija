@@ -68,6 +68,8 @@ class SettingsRepository {
       capturePaused: _prefs.getBool('capture_paused') ?? false,
       skipSensitive: _prefs.getBool('skip_sensitive') ?? true,
       skipSecretLike: _prefs.getBool('skip_secret_like') ?? false,
+      hideAfterCopy: _prefs.getBool('hide_after_copy') ?? false,
+      trayRecents: _prefs.getBool('tray_recents') ?? true,
     );
   }
 
@@ -113,6 +115,8 @@ class SettingsRepository {
     await _prefs.setBool('capture_paused', s.capturePaused);
     await _prefs.setBool('skip_sensitive', s.skipSensitive);
     await _prefs.setBool('skip_secret_like', s.skipSecretLike);
+    await _prefs.setBool('hide_after_copy', s.hideAfterCopy);
+    await _prefs.setBool('tray_recents', s.trayRecents);
     await saveBackendValues(s.backendId, s.backendValues);
   }
 

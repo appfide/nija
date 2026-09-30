@@ -5,13 +5,18 @@ import 'package:nija/data/local/local_store.dart';
 import 'package:nija_core/nija_core.dart';
 import 'package:sqlite3/sqlite3.dart';
 
-ClipItem _item(String text, {String device = 'me', DateTime? at}) {
+ClipItem _item(
+  String text, {
+  String device = 'me',
+  DateTime? at,
+  ClipContentType type = ClipContentType.text,
+}) {
   final now = at ?? DateTime.now().toUtc();
   return ClipItem.create(
     id: 'id-${now.microsecondsSinceEpoch}-$text',
     deviceId: device,
     deviceName: device,
-    type: ClipContentType.text,
+    type: type,
     content: text,
     contentHash: sha256Hex(text),
     sizeBytes: text.length,
@@ -102,6 +107,41 @@ void main() {
     await store.capture(_item('goodbye'));
     expect((await store.watchHistory(query: 'hello').first).length, 1);
     expect((await store.watchHistory().first).length, 2);
+  });
+
+  test('filters narrow by kind and combine with search', () async {
+    final base = DateTime.utc(2026);
+    final link = _item(
+      'https://example.com/a',
+      at: base,
+      type: ClipContentType.url,
+    );
+    final note = _item('a note', at: base.add(const Duration(seconds: 1)));
+    final markup = _item(
+      '<b>a</b>',
+      at: base.add(const Duration(seconds: 2)),
+      type: ClipContentType.html,
+    );
+    final picture = _item(
+      'aGVsbG8=',
+      at: base.add(const Duration(seconds: 3)),
+      type: ClipContentType.image,
+    );
+    await store.applyRemote([link, note, markup, picture]);
+    await store.setPinned(note.id, pinned: true);
+
+    Future<List<String>> ids(HistoryFilter f, [String q = '']) async =>
+        (await store.watchHistory(filter: f, query: q).first)
+            .map((r) => r.item.id)
+            .toList();
+
+    expect(await ids(HistoryFilter.all), hasLength(4));
+    expect(await ids(HistoryFilter.text), [note.id, markup.id]);
+    expect(await ids(HistoryFilter.links), [link.id]);
+    expect(await ids(HistoryFilter.images), [picture.id]);
+    expect(await ids(HistoryFilter.pinned), [note.id]);
+    expect(await ids(HistoryFilter.text, 'note'), [note.id]);
+    expect(await ids(HistoryFilter.links, 'note'), isEmpty);
   });
 
   test('purgeBefore keeps pinned and unsynced rows', () async {

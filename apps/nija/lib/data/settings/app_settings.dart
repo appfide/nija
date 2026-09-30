@@ -25,6 +25,8 @@ class AppSettings {
     this.capturePaused = false,
     this.skipSensitive = true,
     this.skipSecretLike = false,
+    this.hideAfterCopy = false,
+    this.trayRecents = true,
   });
 
   /// Stable id for this installation.
@@ -85,6 +87,13 @@ class AppSettings {
   /// keys, connection strings with passwords).
   final bool skipSecretLike;
 
+  /// Desktop: hide the window once a clip is copied from history, so the
+  /// hotkey, pick, paste loop never needs a mouse.
+  final bool hideAfterCopy;
+
+  /// Desktop: list the newest clips in the tray menu for one-click copy.
+  final bool trayRecents;
+
   /// Backend config derived from these settings.
   BackendConfig get backendConfig =>
       BackendConfig(backendId: backendId, values: backendValues);
@@ -126,6 +135,8 @@ class AppSettings {
     bool? capturePaused,
     bool? skipSensitive,
     bool? skipSecretLike,
+    bool? hideAfterCopy,
+    bool? trayRecents,
   }) => AppSettings(
     deviceId: deviceId ?? this.deviceId,
     deviceName: deviceName ?? this.deviceName,
@@ -146,6 +157,8 @@ class AppSettings {
     capturePaused: capturePaused ?? this.capturePaused,
     skipSensitive: skipSensitive ?? this.skipSensitive,
     skipSecretLike: skipSecretLike ?? this.skipSecretLike,
+    hideAfterCopy: hideAfterCopy ?? this.hideAfterCopy,
+    trayRecents: trayRecents ?? this.trayRecents,
   );
 
   /// Whether a backend/cipher rebuild is needed between [a] and [b].
