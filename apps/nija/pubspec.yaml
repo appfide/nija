@@ -1,7 +1,7 @@
 name: nija
 description: Cross-platform clipboard history synced through your own database.
 publish_to: none
-version: 0.4.1+6
+version: 0.4.2+7
 repository: https://github.com/appfide/nija
 
 environment:
