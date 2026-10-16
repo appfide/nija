@@ -14,6 +14,10 @@ in build/store_shots/out/<kind>/<lang>/NN.png:
     header  3840x1646  product page header (21:9), three phones
     search  3840x2560  search results asset (3:2), three phones
 
+Like Pixfide's listing, each slide lifts the screen's key element out of
+the phone as a tilted card with a white border: the capture test records
+where those widgets sit (<shot>.rects.json) and `sips` crops them.
+
 Rendering uses the appscreen batch renderer (headless Chrome + Three.js),
 found at $APPSCREEN_DIR or next to this repository. It runs twice: the first
 pass measures how tall each headline really is, the second places the
@@ -25,6 +29,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from functools import lru_cache
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RAW = ROOT / "build/store_shots/raw"
@@ -68,6 +73,52 @@ SLIDES = [
     ("05-pair", "s5", -8),
     ("06-settings", "s6", 8),
 ]
+
+
+@lru_cache(maxsize=None)
+def crops(device, shot):
+    """Highlight crops for one raw screen: [(path, width, height), ...] in
+    the order the capture test listed them."""
+    rects_file = RAW / device / f"{shot}.rects.json"
+    if not rects_file.exists():
+        return []
+    out = []
+    for key, (x, y, w, h) in json.loads(rects_file.read_text()).items():
+        dst = RAW / device / "crops" / f"{shot}.{key}.png"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["sips", "-c", str(h), str(w), "--cropOffset", str(y), str(x),
+             str(RAW / device / f"{shot}.png"), "--out", str(dst)],
+            check=True, capture_output=True,
+        )
+        out.append((dst, w, h))
+    return out
+
+
+def cards(device, shot, W, H, slide, max_w, min_w, ys, inset):
+    """Floating highlight cards, alternating sides like Pixfide's listing:
+    tilted, white-bordered and shadowed, overlapping the device's edge."""
+    images = []
+    for k, (path, w, h) in enumerate(crops(device, shot)):
+        # Rows grow a little; small elements (a pill, a PIN) at most 2x.
+        cw = int(min(max_w * W, max(w * 1.15, min(min_w * W, w * 2.0))))
+        ch = int(cw * h / w)
+        left = (slide + k) % 2 == 0
+        x = int(inset * W) if left else int(W - inset * W - cw)
+        y = int(ys[min(k, len(ys) - 1)] * H)
+        images.append({
+            "src": str(path),
+            "x": x,
+            "y": y,
+            "width": cw,
+            "height": ch,
+            "radius": int(min(cw, ch) * 0.12),
+            "fit": "cover",
+            "rotate": -5 if left else 5,
+            "shadow": True,
+            "border": {"width": max(6, int(W * 0.0055)), "color": "rgba(255,255,255,0.85)"},
+        })
+    return images
 
 
 def captions(copy, key, W, top, side, title, sub, sub_y=None):
@@ -171,6 +222,7 @@ def iphone(lang, copy, metrics):
                             "shadow": True,
                         }
                     ],
+                    "images": cards("iphone", shot, W, H, i, 0.74, 0.36, (0.47, 0.67), 0.025),
                     "texts": captions(copy, key, W, top, side, int(W * 0.094), int(W * 0.042), sub_y),
                 },
             }
@@ -227,7 +279,8 @@ def ipad(lang, copy, metrics):
                             "fit": "cover",
                             "focus": {"x": 0.5, "y": 0.0},
                             "shadow": True,
-                        }
+                        },
+                        *cards("ipad", shot, W, H, i, 0.62, 0.3, (0.44, 0.66), 0.03),
                     ],
                     "texts": captions(copy, key, W, top, side, int(W * 0.068), int(W * 0.03), sub_y),
                 },
@@ -288,7 +341,8 @@ def mac(lang, copy, metrics):
                             "radius": int(ww * 0.006),
                             "fit": "cover",
                             "shadow": True,
-                        }
+                        },
+                        *cards("mac", shot, W, H, i, 0.42, 0.2, (0.42, 0.66), 0.03),
                     ],
                     "texts": captions(copy, key, W, top, side, int(W * 0.04), int(W * 0.018), sub_y),
                 },
@@ -326,6 +380,22 @@ def wide(kind, lang, copy, metrics):
         }
         for shot, cx, ry, rz in phones
     ]
+    # Highlight cards fanned along both edges, outside the safe centre.
+    edge = [("01-history", 0, 0.02, 0.16, -7), ("03-devices", 0, 0.08, 0.45, 5), ("04-databases", 0, 0.015, 0.72, 4),
+            ("06-settings", 0, 0.76, 0.15, 6), ("05-pair", 0, 0.82, 0.46, -5), ("04-databases", 1, 0.77, 0.73, -4)]
+    if kind == "search":
+        edge = [(s_, i_, {0.02: 0.012, 0.08: 0.04, 0.015: 0.01, 0.76: 0.82, 0.82: 0.85, 0.77: 0.83}[fx], fy, r)
+                for s_, i_, fx, fy, r in edge]
+    imgs = []
+    for shot, idx, fx, fy, rot in edge:
+        got = crops("iphone", shot)
+        if len(got) <= idx:
+            continue
+        path, w, h = got[idx]
+        card_w = int(W * (0.17 if w / h > 2.5 else 0.12))
+        imgs.append({"src": str(path), "x": int(W * fx), "y": int(H * fy), "width": card_w,
+                     "height": int(card_w * h / w), "radius": int(min(card_w, card_w * h / w) * 0.12), "fit": "cover", "rotate": rot, "shadow": True,
+                     "border": {"width": 10, "color": "rgba(255,255,255,0.8)"}, "opacity": 0.95})
     bg = json.loads(json.dumps(BRAND_BG))
     bg["glows"] = [
         {"color": "#2563eb", "x": 0.5, "y": 0.0, "radius": 0.45, "opacity": 0.6},
@@ -343,6 +413,7 @@ def wide(kind, lang, copy, metrics):
                 "supersample": 1,
                 "background": bg,
                 "devices": devices,
+                "images": imgs,
                 "texts": captions(copy, kind, W, top, (W - cw) // 2, title, int(title * 0.45), sub_y),
             },
         }

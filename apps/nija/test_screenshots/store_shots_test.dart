@@ -4,7 +4,10 @@
 // Not part of `flutter test`; regenerate with:
 //   flutter test test_screenshots/store_shots_test.dart --update-goldens \
 //     --dart-define=STORE_BUILD=true
-// Output: build/store_shots/raw/<device>/<name>.png (gitignored).
+// Output: build/store_shots/raw/<device>/<name>.png (gitignored), plus
+// <name>.rects.json: where the widgets the composer lifts out as highlight
+// cards sit on that screen, in physical pixels.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:drift/native.dart';
@@ -20,6 +23,8 @@ import 'package:nija/data/settings/secret_store.dart';
 import 'package:nija/features/sync/sync_controller.dart';
 import 'package:nija/providers.dart';
 import 'package:nija/ui/app_theme.dart';
+import 'package:nija/ui/widgets/section_card.dart';
+import 'package:nija/ui/widgets/status_pill.dart';
 import 'package:nija_core/nija_core.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -322,6 +327,35 @@ enum _Device {
   final double bottom;
 }
 
+/// Records where each highlight widget sits, in physical pixels, if it is
+/// fully on screen; the composer crops those regions into floating cards.
+void _saveRects(
+  WidgetTester tester,
+  _Device device,
+  String name,
+  Map<String, Finder> highlights,
+) {
+  // On the phone the bottom navigation bar covers the last rows.
+  final bottom = device == _Device.iphone ? 120.0 : 0.0;
+  final screen =
+      Offset.zero & Size(device.size.width, device.size.height - bottom);
+  final rects = <String, List<int>>{};
+  for (final MapEntry(:key, :value) in highlights.entries) {
+    if (value.evaluate().isEmpty) continue;
+    final r = tester.getRect(value);
+    if (!screen.contains(r.topLeft) || !screen.contains(r.bottomRight)) {
+      continue;
+    }
+    rects[key] = [
+      for (final v in [r.left, r.top, r.width, r.height])
+        (v * device.dpr).round(),
+    ];
+  }
+  File('../../build/store_shots/raw/${device.name}/$name.rects.json')
+    ..createSync(recursive: true)
+    ..writeAsStringSync(jsonEncode(rects));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(_loadFonts);
@@ -332,6 +366,7 @@ void main() {
     required String name,
     required String location,
     Future<void> Function(WidgetTester t)? act,
+    Map<String, Finder> highlights = const {},
   }) async {
     tester.view
       ..physicalSize = device.size * device.dpr
@@ -394,6 +429,7 @@ void main() {
     );
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
     if (act != null) await act(tester);
+    _saveRects(tester, device, name, highlights);
     await expectLater(
       find.byType(MaterialApp),
       matchesGoldenFile(
@@ -420,17 +456,68 @@ void main() {
     }
   }
 
-  final screens = <(String, String, Future<void> Function(WidgetTester)?)>[
-    ('01-history', '/', null),
-    ('02-search', '/', search),
-    ('03-devices', '/settings/devices', null),
-    ('04-databases', '/settings/backend', null),
-    ('05-pair', '/settings/devices/pair', pair),
-    ('06-settings', '/settings', null),
-  ];
+  Finder row(String text) => find
+      .ancestor(of: find.text(text), matching: find.byType(SettingRow))
+      .first;
+
+  final screens =
+      <
+        (
+          String,
+          String,
+          Future<void> Function(WidgetTester)?,
+          Map<String, Finder>,
+        )
+      >[
+        (
+          '01-history',
+          '/',
+          null,
+          {
+            'pinned': find.byKey(const ValueKey('clip-5')),
+            'live': find.byType(StatusPill).first,
+          },
+        ),
+        (
+          '02-search',
+          '/',
+          search,
+          {'match': find.byKey(const ValueKey('clip-6'))},
+        ),
+        (
+          '03-devices',
+          '/settings/devices',
+          null,
+          {
+            'iphone': find.byKey(const ValueKey('device-iphone')),
+            'macbook': find.byKey(const ValueKey('device-macbook-pro')),
+          },
+        ),
+        (
+          '04-databases',
+          '/settings/backend',
+          null,
+          {
+            'supabase': find.byKey(const ValueKey('backend-supabase')),
+            'pocketbase': find.byKey(const ValueKey('backend-pocketbase')),
+          },
+        ),
+        (
+          '05-pair',
+          '/settings/devices/pair',
+          pair,
+          {'pin': find.byKey(const ValueKey('pairing-pin'))},
+        ),
+        (
+          '06-settings',
+          '/settings',
+          null,
+          {'encryption': row('End-to-end encryption')},
+        ),
+      ];
 
   for (final device in _Device.values) {
-    for (final (name, location, act) in screens) {
+    for (final (name, location, act, highlights) in screens) {
       testWidgets(
         '${device.name} $name',
         timeout: const Timeout(Duration(seconds: 90)),
@@ -440,6 +527,7 @@ void main() {
           name: name,
           location: location,
           act: act,
+          highlights: highlights,
         ),
       );
     }
