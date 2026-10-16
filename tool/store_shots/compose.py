@@ -11,7 +11,8 @@ in build/store_shots/out/<kind>/<lang>/NN.png:
     iphone  1320x2868  iPhone 6.9", 3D frame
     ipad    2064x2752  iPad 13", flat bezel
     mac     2880x1800  Mac, window with traffic lights
-    header  3840x1646  product page header, three phones
+    header  3840x1646  product page header (21:9), three phones
+    search  3840x2560  search results asset (3:2), three phones
 
 Rendering uses the appscreen batch renderer (headless Chrome + Three.js),
 found at $APPSCREEN_DIR or next to this repository. It runs twice: the first
@@ -296,19 +297,20 @@ def mac(lang, copy, metrics):
     return jobs
 
 
-def header(lang, copy, metrics):
-    """Product page header, 21:9: captions and three phones in the centre,
-    where every crop of the header still shows them."""
-    W, H = 3840, 1646
-    dst = OUT / "header" / f"{lang}.png"
+def wide(kind, lang, copy, metrics):
+    """Product page header (21:9) and search results asset (3:2): captions
+    and three phones in the centre, where every crop still shows them."""
+    W, H = (3840, 1646) if kind == "header" else (3840, 2560)
+    dst = OUT / kind / f"{lang}.png"
     cw = int(W * 0.5)
-    top = int(H * 0.075)
-    title = int(H * 0.085)
+    top = int(H * (0.075 if kind == "header" else 0.07))
+    title = int(H * (0.085 if kind == "header" else 0.075))
     sub_y, sb = layout(metrics, dst, H, top, 0.015)
     tb = sb or top + title * 2.4
-    dev_h = 1.05
+    dev_h = 1.05 if kind == "header" else 0.82
     cy = (tb + int(H * 0.05) + dev_h * H / 2) / H
-    phones = [("03-devices", 0.5 - 0.135, -14, 4), ("05-pair", 0.5 + 0.135, 14, -4), ("01-history", 0.5, 0, 0)]
+    spread = 0.135 if kind == "header" else 0.17
+    phones = [("03-devices", 0.5 - spread, -14, 4), ("05-pair", 0.5 + spread, 14, -4), ("01-history", 0.5, 0, 0)]
     devices = [
         {
             "model": "iphone",
@@ -341,13 +343,19 @@ def header(lang, copy, metrics):
                 "supersample": 1,
                 "background": bg,
                 "devices": devices,
-                "texts": captions(copy, "header", W, top, (W - cw) // 2, title, int(title * 0.45), sub_y),
+                "texts": captions(copy, kind, W, top, (W - cw) // 2, title, int(title * 0.45), sub_y),
             },
         }
     ]
 
 
-KINDS = {"iphone": iphone, "ipad": ipad, "mac": mac, "header": header}
+KINDS = {
+    "iphone": iphone,
+    "ipad": ipad,
+    "mac": mac,
+    "header": lambda lang, copy, m: wide("header", lang, copy, m),
+    "search": lambda lang, copy, m: wide("search", lang, copy, m),
+}
 
 
 def build(kinds, langs, metrics):
@@ -371,7 +379,7 @@ def render(jobs, path, concurrency):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kinds", default="iphone,ipad,mac,header")
+    ap.add_argument("--kinds", default="iphone,ipad,mac,header,search")
     ap.add_argument("--langs", default=",".join(COPY))
     ap.add_argument("--concurrency", type=int, default=2)
     a = ap.parse_args()
@@ -379,7 +387,7 @@ def main():
         sys.exit(f"renderer not found at {RENDER}; set APPSCREEN_DIR")
     kinds, langs = a.kinds.split(","), a.langs.split(",")
     for k in kinds:
-        if k != "header" and not (RAW / k).is_dir():
+        if k not in ("header", "search") and not (RAW / k).is_dir():
             sys.exit(f"no raw screens in {RAW / k}; run the store_shots golden test first")
 
     # Pass 1 measures the captions; pass 2 lays out under them.
