@@ -60,13 +60,86 @@ presence (online / last seen, platform, app version) and its membership.
 
 | Action | Effect |
 |---|---|
-| **Block** | Other devices ignore its clips. The device stops syncing on its next check-in (about a minute), deletes its copy of the credentials and passphrase, and shows a notice. Can be undone with **Unblock**. |
+| **Pause sync** | The device stays paired but sends and receives nothing from its next check-in (about a minute). Clips copied elsewhere while it is paused never reach it (nor those written in the minute or so before it noticed the pause), and what it copies meanwhile stays on it; its deletions and *Send to* clips still go out on resume. **Resume** brings it back. Paused devices still receive rotated passphrases. Cooperative like every status: a device on 0.4.2 or older reads `paused` as active and keeps syncing. |
+| **Block** | Other devices ignore its clips. The device stops syncing on its next check-in (about a minute), deletes its copy of the credentials and passphrase, and shows a notice. **Unblock** clears the status, but the device has to be paired again. |
 | **Change role** | *Send & receive* (default), *Send only* (pushes its clips, never pulls history, like a guest laptop), *Receive only* (pulls, never pushes, like a display machine). Applied on the device's next check-in. |
 | **Access duration** | Sets `expires_at`. When it passes, the device disconnects itself the same way as a block, and other devices stop applying its clips. |
 | **Remove** | Like block, but permanent: the row stays as a tombstone so the device learns it was removed. |
 | **Forget** | Deletes the row. Use after the device has disconnected (or for unused invitations). A device that is still running notices the missing row and disconnects with "removed". |
 
 A device cannot manage itself; rename it under **This device**.
+
+### Permissions and more admins
+
+In a signed group the admin can hand out powers from a device's menu:
+
+- **Permissions…** grants a member one power without making it an admin.
+  Today that is *Delete database history* (Settings → Data). The grant is
+  stored in the device row as `permissions` and covered by the admin
+  signature, so a member cannot grant it to itself: editing the field breaks
+  the signature and every device then distrusts the row. Taking it back
+  works the same way.
+- **Make admin…** seals the group admin key to the device's X25519 key and
+  stores it as `admin_envelope`, also signed. On its next check-in the
+  device opens it, checks it matches the pinned admin key, and from then on
+  can do everything the admin can. **There is no undo**: the device keeps
+  the key even after it is removed. Taking admin power back means securing
+  the group again with a new admin key.
+
+Both need the 0.5 schema upgrade on Supabase and PocketBase (two text
+columns, see each backend's page). Without it the app writes the grant,
+reads it back, finds it missing, restores the previous signed row and
+reports the upgrade to run, so a device is never left with a broken
+signature. CouchDB, Firestore and MongoDB need nothing.
+
+### Leaving a group, or starting a new one
+
+- **Settings → Devices → Leave this group** deletes this device's row,
+  forgets the database credentials, passphrase and admin key, and goes back
+  to local-only. History stays unless you tick *Also delete history on this
+  device*. If this is the only admin, make another device an admin first or
+  nobody can manage the group afterwards.
+- **Settings → Devices → Start a new group on this database** deletes every
+  clip and device row and makes this device the admin of a new group, with a
+  new admin key and a new passphrase. The other devices disconnect on their
+  next check-in; pair them again. Because it needs only the database
+  credentials, this is also the way back when the admin device is lost (for
+  example, its keychain was wiped by a reinstall).
+
+### Resetting the database
+
+Dropping the tables (or deleting every device row) and creating them again
+is treated as a fresh database, not as every device being forgotten: a
+device whose row is gone disconnects only when one of the remaining rows
+belongs to a device it already knew (being forgotten always leaves at least
+the row of the device that did it). Otherwise it registers again, even when
+other devices got back first. The
+admin signs its own row again on its first check-in. In a signed group the
+other devices then show as unverified, because their rows are new and
+unsigned; pair them again from the admin. History already on each device
+stays there and is not uploaded again.
+
+Keep every admin device on 0.5 or later. An older admin rewrites whole
+device rows without these fields, which drops a grant (the device then
+simply loses it; nothing is granted by accident).
+
+### Deleting clips
+
+- **A single clip** can be deleted from the group only by the device that
+  copied it: the deletion is signed with that device's key, and other devices
+  verify it against the same key. On any other device, *Delete on this
+  device* removes the local copy only.
+- **Settings → Data → Delete history on this device** removes every local
+  clip. The database keeps its copy, and those clips are not downloaded again.
+- **Settings → Data → Delete history in the database** removes every clip and
+  deletion record from the database. Device rows and keys stay, so sync
+  carries on, and each device keeps the history it already has. In a signed
+  group only the admin, or a member it gave the permission, sees this
+  enabled. Anyone holding the database credentials can still delete rows
+  directly; this, like the rest of membership, is enforced by the app, not
+  by the database.
+- **Settings → Sync → Sync with the database** turns sync off on one device.
+  Capture continues locally and nothing copied while it is off is sent.
 
 ### Send to one device
 
@@ -107,7 +180,7 @@ credentials instead.
   signature verifies and the version is not lower than one they have seen.
 - **Passphrases travel in envelopes**, sealed to each device's X25519 key
   and covered by the admin signature. *Rotate encryption key* issues a fresh
-  random passphrase to every verified active device; a removed or blocked
+  random passphrase to every verified active or paused device; a removed or blocked
   device gets nothing and cannot read clips sealed with the new key.
 
 With that in place, someone who has the database credentials but not the

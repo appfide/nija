@@ -32,8 +32,9 @@ String _mask(String s) {
 final List<RegExp> _patterns = <RegExp>[
   // JWTs (Supabase legacy keys, Firebase id tokens, PocketBase tokens).
   RegExp(r'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'),
-  // Supabase new-style keys.
+  // Supabase new-style keys and personal access tokens.
   RegExp('sb_(publishable|secret)_[A-Za-z0-9_-]{20,}'),
+  RegExp('sbp_[A-Za-z0-9]{20,}'),
   // Google / Firebase API keys.
   RegExp('AIza[0-9A-Za-z_-]{35}'),
   // AWS access key ids, GitHub tokens, Slack tokens, `sk-` style API keys.

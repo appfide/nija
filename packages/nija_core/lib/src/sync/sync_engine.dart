@@ -21,6 +21,10 @@ typedef SyncLogger = void Function(String message, {Object? error});
 /// key envelope. The app persists it and adds it to the [CipherRing].
 typedef KeyReceived = Future<void> Function(int version, String passphrase);
 
+/// Receives the group's admin key (`AdminKey.encode`) when the admin made
+/// this device an admin after pairing.
+typedef AdminKeyReceived = Future<void> Function(String encodedAdminKey);
+
 /// An admin key the device has not pinned yet but whose signatures appear
 /// on the group's rows. The app asks the user to compare the fingerprint
 /// with the admin device before trusting it.
@@ -80,11 +84,14 @@ class SyncEngine {
     CipherRing? cipherRing,
     ClipCipher? cipher,
     this.onKeyReceived,
+    this.onAdminKeyReceived,
     this.pollInterval = const Duration(seconds: 5),
     this.heartbeatInterval = const Duration(minutes: 1),
     this.echoWindow = const Duration(seconds: 10),
     this.pushBatchSize = 50,
     this.assumeRegistered = false,
+    this._paused = false,
+    this.onPausedChanged,
     Map<String, int>? seenMembershipVersions,
     SyncLogger? logger,
   }) : _ring =
@@ -111,6 +118,9 @@ class SyncEngine {
   /// Receives passphrases delivered through key envelopes.
   final KeyReceived? onKeyReceived;
 
+  /// Receives the admin key sealed to this device by [makeAdmin].
+  final AdminKeyReceived? onAdminKeyReceived;
+
   /// Poll cadence when the backend lacks realtime.
   final Duration pollInterval;
 
@@ -125,6 +135,11 @@ class SyncEngine {
 
   /// Whether a missing own row means revocation (see constructor).
   final bool assumeRegistered;
+
+  /// Called when the admin pauses or resumes this device. Persist the value
+  /// and pass it back as `paused`, so a resume that happens while the app is
+  /// closed still skips the paused period.
+  final void Function({required bool paused})? onPausedChanged;
 
   final _statusCtl = StreamController<SyncStatus>.broadcast(sync: true);
   final _incomingCtl = StreamController<List<ClipItem>>.broadcast();
@@ -142,6 +157,9 @@ class SyncEngine {
 
   List<Device> _devices = const [];
   Map<String, Device> _trusted = const {};
+  Map<String, Device> _held = const {};
+  bool _paused;
+  Set<DevicePermission> _permissions = const {};
   Set<String> _known = const {};
   DeviceRole _role = DeviceRole.full;
   bool _registered = false;
@@ -185,6 +203,13 @@ class SyncEngine {
 
   /// Whether this device can sign membership changes.
   bool get isAdmin => adminKey != null;
+
+  /// Powers the admin granted this device, read from its own verified row.
+  /// Empty in a legacy group, where nothing is signed.
+  Set<DevicePermission> get permissions => Set.unmodifiable(_permissions);
+
+  /// Whether the admin paused this device.
+  bool get isPaused => _paused;
 
   /// Whether [start] has been called and [stop] has not.
   bool get isRunning => _running;
@@ -282,9 +307,17 @@ class SyncEngine {
   Future<void> blockDevice(String id) =>
       _patch(id, (d) => d.copyWith(status: DeviceStatus.blocked));
 
-  /// Re-activates a blocked device.
+  /// Re-activates a blocked or paused device.
   Future<void> unblockDevice(String id) =>
       _patch(id, (d) => d.copyWith(status: DeviceStatus.active));
+
+  /// Pauses [id]: it keeps its credentials but stops syncing until
+  /// [resumeDevice]. Clips written meanwhile never reach it.
+  Future<void> pauseDevice(String id) =>
+      _patch(id, (d) => d.copyWith(status: DeviceStatus.paused));
+
+  /// Resumes a paused device.
+  Future<void> resumeDevice(String id) => unblockDevice(id);
 
   /// Marks [id] as removed. The row stays so the device learns about it;
   /// call [forgetDevice] later to delete the row.
@@ -520,7 +553,8 @@ class SyncEngine {
     // blocked / expired / unverified rows *and* rolled-back rows that still
     // carry an older valid signature.
     await _membership();
-    for (final d in _trusted.values) {
+    // Paused devices get the key too: they will need it once resumed.
+    for (final d in [..._trusted.values, ..._held.values]) {
       if (d.boxPub == null) continue;
       final env = await KeyEnvelope.seal(
         passphrase: newPassphrase,
@@ -541,15 +575,89 @@ class SyncEngine {
     return issued;
   }
 
+  /// Replaces the powers granted to [id]. Signed groups only: in a legacy
+  /// group every device may already do everything.
+  Future<void> setDevicePermissions(
+    String id,
+    Set<DevicePermission> permissions,
+  ) => _patchGrant(id, (d) => d.copyWith(permissions: {...permissions}));
+
+  /// Makes [id] an admin: seals the admin key to its box key and flags the
+  /// row. The device installs the key on its next check-in. There is no
+  /// undo: the device keeps the key, and only a new admin key (securing the
+  /// group again) takes the power back.
+  Future<void> makeAdmin(String id) async {
+    final admin = adminKey;
+    if (!isSignedGroup || admin == null) {
+      throw StateError('Only the admin of a signed group can add admins');
+    }
+    final target = await _deviceRow(id);
+    final boxPub = target.boxPub;
+    if (boxPub == null) {
+      throw StateError('${target.name} has not published its keys yet');
+    }
+    // Version 0 marks an admin key; passphrase envelopes start at 1.
+    final env = await KeyEnvelope.seal(
+      passphrase: await admin.encode(),
+      version: 0,
+      recipientBoxPub: boxPub,
+    );
+    await _patchGrant(
+      id,
+      (d) => d.copyWith(admin: true, adminEnvelope: env.encode()),
+    );
+  }
+
+  /// [_patch] for the grant fields added in 0.5, with a read-back: a schema
+  /// without them may drop the values silently, leaving a row whose
+  /// signature no longer verifies. In that case the previous state is
+  /// signed again and the error names the upgrade to run.
+  Future<void> _patchGrant(String id, Device Function(Device) change) async {
+    if (!isSignedGroup || adminKey == null) {
+      throw StateError('Only the admin of a signed group can grant powers');
+    }
+    final before = await _deviceRow(id);
+    final want = await _signed(change(before));
+    Object? failure;
+    try {
+      await _backend.updateDevice(want);
+      final stored = (await _backend.listDevices())
+          .where((d) => d.id == id)
+          .firstOrNull;
+      if (stored != null &&
+          DevicePermission.encode(stored.permissionNames) ==
+              DevicePermission.encode(want.permissionNames) &&
+          stored.adminEnvelope == want.adminEnvelope) {
+        await _membership();
+        return;
+      }
+    } on BackendException catch (e) {
+      failure = e;
+    }
+    // The previous row, signed above the failed version so no device
+    // treats it as a rollback.
+    await _backend.updateDevice(
+      await _signed(before.copyWith(membershipVersion: want.membershipVersion)),
+    );
+    await _membership();
+    throw BackendException(
+      'The database did not keep the new permission fields. Run the 0.5 '
+      'upgrade for ${_backend.descriptor.displayName} '
+      '(${_backend.descriptor.docsPath}).',
+      cause: failure,
+    );
+  }
+
+  Future<Device> _deviceRow(String id) async {
+    final row =
+        _devices.where((d) => d.id == id).firstOrNull ??
+        (await _backend.listDevices()).where((d) => d.id == id).firstOrNull;
+    return row ?? (throw BackendException('Unknown device $id'));
+  }
+
   Future<void> _patch(String id, Device Function(Device) change) async {
     _requireAdminIfSigned();
-    var current = _devices.where((d) => d.id == id).firstOrNull;
-    current ??= (await _backend.listDevices())
-        .where((d) => d.id == id)
-        .firstOrNull;
-    if (current == null) {
-      throw BackendException('Unknown device $id');
-    }
+    final current = await _deviceRow(id);
     await _backend.updateDevice(await _signed(change(current)));
     await _membership();
   }
@@ -576,6 +684,10 @@ class SyncEngine {
       if (last == null ||
           clock.now().toUtc().difference(last) >= heartbeatInterval) {
         if (!await _membership()) return;
+      }
+      if (_paused) {
+        _emit(_status.copyWith(phase: SyncPhase.paused, clearError: true));
+        return;
       }
       if (_role.canSend) await _push();
       if (_role.canReceive) await _pull();
@@ -614,6 +726,13 @@ class SyncEngine {
       if (batch.isEmpty) return;
       final out = <ClipItem>[];
       for (final item in batch) {
+        // Only a clip's origin may delete it from the group. A tombstone for
+        // another device's clip would overwrite its row under that device's
+        // id with our signature, which every other device then rejects.
+        if (item.isDeleted && item.deviceId != _device.id) {
+          _log('kept tombstone for ${item.id} local: another device owns it');
+          continue;
+        }
         var i = cipher == null
             ? item
             : (await cipher.seal(item)).copyWith(keyVersion: version);
@@ -621,7 +740,7 @@ class SyncEngine {
         if (keys != null) i = await ClipSigning.signItem(i, keys);
         out.add(i);
       }
-      await _backend.upsert(out);
+      if (out.isNotEmpty) await _backend.upsert(out);
       await _store.markSynced(batch.map((i) => i.id));
       _log('pushed ${batch.length} item(s)');
       if (batch.length < pushBatchSize) return;
@@ -764,12 +883,34 @@ class SyncEngine {
         boxPub: me?.boxPub == null ? identity?.boxPub : null,
       );
       if (me == null) {
-        if (_registered || assumeRegistered) {
+        // Being forgotten leaves the rows of devices we already knew (at
+        // least the one that did it). When none of the rows is one of
+        // those, the database was reset (tables dropped and created again)
+        // and other devices merely registered before us.
+        final knewAny = list.any(
+          (d) => _known.contains(d.id) || _seenVersions.containsKey(d.id),
+        );
+        final reset = !knewAny && (_registered || assumeRegistered);
+        if ((_registered || assumeRegistered) && !reset) {
           _revoke('removed');
           return false;
         }
+        if (reset) _log('device list is empty: database reset, registering');
         await _backend.registerDevice(presence);
         me = presence;
+        final admin = adminKey;
+        if (reset && admin != null && isSignedGroup) {
+          // The admin signs its own row again so the group stays managed,
+          // above any version other devices have seen for it.
+          me = await ClipSigning.signMembership(
+            presence.copyWith(
+              admin: true,
+              membershipVersion: _seenVersions[_device.id] ?? 0,
+            ),
+            admin,
+          );
+          await _backend.updateDevice(me);
+        }
         list = [...list, me];
       } else {
         // Decide what to obey. In a signed group only a validly signed,
@@ -789,6 +930,7 @@ class SyncEngine {
             _revoke('expired');
             return false;
           }
+          await _applyPause(now, paused: me.status == DeviceStatus.paused);
         } else if (!obey) {
           _log('own membership row is not signed by the pinned admin');
         }
@@ -803,6 +945,7 @@ class SyncEngine {
 
       // Trust computation.
       final trusted = <String, Device>{};
+      final held = <String, Device>{};
       var selfVerified = !isSignedGroup;
       String? seenAdmin;
       String? seenAdminName;
@@ -817,8 +960,16 @@ class SyncEngine {
           }
           if (d.id == me.id) selfVerified = ok;
           if (ok && d.canSync(now)) trusted[d.id] = d;
+          if (ok && d.isHeld(now)) held[d.id] = d;
         } else {
+          // Remembered (and persisted by the app) so a later missing own row
+          // can tell "forgotten" from "database reset".
+          _seenVersions[d.id] = max(
+            _seenVersions[d.id] ?? 0,
+            d.membershipVersion,
+          );
           if (d.canSync(now)) trusted[d.id] = d;
+          if (d.isHeld(now)) held[d.id] = d;
           // Legacy group: notice an admin key so the app can offer to pin it.
           if (d.isSigned) {
             seenAdmin ??= d.adminPub;
@@ -843,10 +994,15 @@ class SyncEngine {
       // Key envelope addressed to us (only trust it from a verified row).
       final myRow = me;
       if (selfVerified || !isSignedGroup) await _acceptEnvelope(myRow);
+      _permissions = isSignedGroup && selfVerified
+          ? myRow.permissions
+          : const {};
+      if (isSignedGroup && selfVerified) await _acceptAdminKey(myRow);
 
       _registered = true;
       _role = selfVerified || !isSignedGroup ? me.role : _role;
       _trusted = trusted;
+      _held = held;
       _known = {for (final d in list) d.id};
       _devices = list;
       _lastMembership = now;
@@ -866,6 +1022,38 @@ class SyncEngine {
     }
   }
 
+  /// Applies the pause flag from our own row. While paused the cursor
+  /// follows the clock, so on resume nothing written during the pause is
+  /// pulled; clips other devices wrote between the last pull and the first
+  /// paused heartbeat are skipped too. On resume, clips captured meanwhile
+  /// are marked sent without pushing, so they stay local.
+  Future<void> _applyPause(DateTime now, {required bool paused}) async {
+    if (paused) {
+      await _store.saveCursor(now);
+      if (!_paused) {
+        _paused = true;
+        _log('paused by the group admin');
+        onPausedChanged?.call(paused: true);
+      }
+      return;
+    }
+    if (!_paused) return;
+    _paused = false;
+    await _store.saveCursor(now);
+    // Copies made while paused stay local; deletions and clips the user
+    // explicitly sent to a device still go out.
+    final held = await _store.pendingOutbox(limit: 1 << 30);
+    final local = [
+      for (final i in held)
+        if (!i.isDeleted && !i.isTargeted) i.id,
+    ];
+    await _store.markSynced(local);
+    _log(
+      'resumed; skipped the paused period, kept ${local.length} clip(s) local',
+    );
+    onPausedChanged?.call(paused: false);
+  }
+
   bool _isRollback(Device d) {
     final seen = _seenVersions[d.id];
     if (seen != null && d.membershipVersion < seen) {
@@ -875,6 +1063,28 @@ class SyncEngine {
       return true;
     }
     return false;
+  }
+
+  /// Installs the admin key sealed to us by [makeAdmin]. The row is
+  /// verified by the caller; the key must also match the pinned admin key.
+  Future<void> _acceptAdminKey(Device me) async {
+    final env = me.adminEnvelope;
+    final keys = identity;
+    if (!me.admin || env == null || keys == null || adminKey != null) return;
+    try {
+      final envelope = KeyEnvelope.decode(env);
+      if (envelope.version != 0) return;
+      final encoded = await envelope.open(keys);
+      final key = await AdminKey.decode(encoded);
+      if (key.publicKey != trustedAdminPub) {
+        _log('admin key envelope holds a different key; ignored');
+        return;
+      }
+      await onAdminKeyReceived?.call(encoded);
+      _log('received the group admin key');
+    } catch (e) {
+      _log('admin key envelope unreadable', error: e);
+    }
   }
 
   Future<void> _acceptEnvelope(Device me) async {

@@ -17,6 +17,9 @@
 # Distribution certificate already in the keychain plus a profile created
 # ahead of time in App Store Connect.
 #
+# Both platforms build with STORE_BUILD=true, which hides the installers for
+# other platforms and (sandboxed) start-at-login; see BuildInfo.storeBuild.
+#
 # macOS note: the Mac App Store requires the sandbox, which the Developer ID
 # build deliberately does not use. The Runner target is therefore switched to
 # AppStore.entitlements for the archive and switched back afterwards, even if
@@ -55,6 +58,7 @@ case "$platform" in
     (cd "$APP_DIR" && flutter build ipa --release \
       --export-method app-store \
       --dart-define "APP_VERSION=$version" --dart-define "GIT_SHA=$sha" \
+      --dart-define STORE_BUILD=true \
       --no-tree-shake-icons >/dev/null) || true
 
     cat > "$OUT/ExportOptions-ios.plist" <<EOF
@@ -100,8 +104,16 @@ new = f'''\t\t\t\tCODE_SIGN_ENTITLEMENTS = Runner/AppStore.entitlements;
 if old not in s:
     raise SystemExit('the Runner Release configuration is not in the expected shape')
 s = s.replace(old, new, 1)
-s = s.replace('\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "";',
-              '\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "Nija macOS App Store";', 1)
+# The profile must go on the same (Release) configuration, which comes after
+# the Debug and Profile ones in the file: replacing the first match would set
+# it on Profile and leave the archive without one.
+at = s.index(new)
+spec = '\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "";'
+i = s.find(spec, at)
+end = s.find('name = Release;', at)
+if i < 0 or i > end:
+    raise SystemExit('no PROVISIONING_PROFILE_SPECIFIER in the Runner Release configuration')
+s = s[:i] + '\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "Nija macOS App Store";' + s[i + len(spec):]
 pbx.write_text(s)
 PY
 
@@ -120,6 +132,12 @@ PY
 </dict></plist>
 EOF
     rm -rf "$OUT/macos" "$OUT/Nija-macos.xcarchive"
+    # xcodebuild archives from the Flutter config of the last `flutter build
+    # macos` (version, build number, dart-defines). Regenerate it so the
+    # archive carries this version rather than whatever ran before.
+    (cd "$APP_DIR" && flutter build macos --release \
+      --dart-define "APP_VERSION=$version" --dart-define "GIT_SHA=$sha" \
+      --dart-define STORE_BUILD=true >/dev/null)
     (cd "$APP_DIR/macos" && xcodebuild -workspace Runner.xcworkspace -scheme Runner \
       -configuration Release -archivePath "$OUT/Nija-macos.xcarchive" archive >/dev/null)
     xcodebuild -exportArchive \

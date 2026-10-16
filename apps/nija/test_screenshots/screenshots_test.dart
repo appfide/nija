@@ -336,7 +336,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     // Credential-store reads are bounded by a 10 s timeout; let it elapse
     // under the fake clock so no timer outlives the test.
-    await tester.pump(SecretStore.timeout + const Duration(seconds: 1));
+    await tester.pump(SecretStore.defaultTimeout + const Duration(seconds: 1));
     await tester.runAsync(db.close);
   }
 

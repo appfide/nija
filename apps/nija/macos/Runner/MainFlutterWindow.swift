@@ -23,11 +23,16 @@ class MainFlutterWindow: NSWindow {
       NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"),
       NSPasteboard.PasteboardType("org.nspasteboard.TransientType"),
     ]
+    // Set on content that arrived from another Apple device through
+    // Universal Clipboard.
+    let remote = NSPasteboard.PasteboardType("com.apple.is-remote-clipboard")
     channel.setMethodCallHandler { call, result in
       switch call.method {
       case "isSensitive":
         let types = NSPasteboard.general.types ?? []
         result(types.contains { flagged.contains($0) })
+      case "isRemote":
+        result((NSPasteboard.general.types ?? []).contains(remote))
       default:
         result(FlutterMethodNotImplemented)
       }

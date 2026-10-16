@@ -1,7 +1,12 @@
-include: ../../analysis_options.yaml
+include: ../../analysis_options.shared.yaml
 
 analyzer:
   exclude:
     - "**/*.g.dart"
     - "**/*.drift.dart"
     - "lib/generated/**"
+    - android/**
+    - ios/**
+    - windows/**
+    - macos/**
+    - linux/**

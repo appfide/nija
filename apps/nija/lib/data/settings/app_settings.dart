@@ -23,8 +23,10 @@ class AppSettings {
     this.hotkeyEnabled = true,
     this.themeMode = 'system',
     this.capturePaused = false,
+    this.remoteSyncEnabled = true,
     this.skipSensitive = true,
     this.skipSecretLike = false,
+    this.skipUniversalClipboard = true,
     this.hideAfterCopy = false,
     this.trayRecents = true,
   });
@@ -77,6 +79,11 @@ class AppSettings {
   /// Capture is paused: nothing new is recorded or synced until resumed.
   final bool capturePaused;
 
+  /// Sync with the database. Off: this device keeps capturing into its own
+  /// history but sends and receives nothing; what it captures meanwhile
+  /// stays local, and clips from other devices arrive once turned back on.
+  final bool remoteSyncEnabled;
+
   /// Honour the OS "sensitive / transient" clipboard hints set by password
   /// managers (macOS `ConcealedType`, Windows
   /// `ExcludeClipboardContentFromMonitorProcessing`, Android 13+
@@ -86,6 +93,10 @@ class AppSettings {
   /// Skip text that looks like a credential (API keys, tokens, private
   /// keys, connection strings with passwords).
   final bool skipSecretLike;
+
+  /// While syncing, leave content that arrived through Universal Clipboard
+  /// to Nija on the device it came from, so clips keep that device's name.
+  final bool skipUniversalClipboard;
 
   /// Desktop: hide the window once a clip is copied from history, so the
   /// hotkey, pick, paste loop never needs a mouse.
@@ -133,8 +144,10 @@ class AppSettings {
     bool? hotkeyEnabled,
     String? themeMode,
     bool? capturePaused,
+    bool? remoteSyncEnabled,
     bool? skipSensitive,
     bool? skipSecretLike,
+    bool? skipUniversalClipboard,
     bool? hideAfterCopy,
     bool? trayRecents,
   }) => AppSettings(
@@ -155,8 +168,11 @@ class AppSettings {
     hotkeyEnabled: hotkeyEnabled ?? this.hotkeyEnabled,
     themeMode: themeMode ?? this.themeMode,
     capturePaused: capturePaused ?? this.capturePaused,
+    remoteSyncEnabled: remoteSyncEnabled ?? this.remoteSyncEnabled,
     skipSensitive: skipSensitive ?? this.skipSensitive,
     skipSecretLike: skipSecretLike ?? this.skipSecretLike,
+    skipUniversalClipboard:
+        skipUniversalClipboard ?? this.skipUniversalClipboard,
     hideAfterCopy: hideAfterCopy ?? this.hideAfterCopy,
     trayRecents: trayRecents ?? this.trayRecents,
   );
@@ -168,5 +184,6 @@ class AppSettings {
       !mapEquals(a.backendValues, b.backendValues) ||
       a.encryptionEnabled != b.encryptionEnabled ||
       a.pollIntervalSeconds != b.pollIntervalSeconds ||
+      a.remoteSyncEnabled != b.remoteSyncEnabled ||
       a.deviceName != b.deviceName;
 }

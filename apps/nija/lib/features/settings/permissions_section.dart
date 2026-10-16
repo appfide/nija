@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:nija/core/build_info.dart';
 import 'package:nija/features/sync/sync_controller.dart';
 import 'package:nija/platform/clipboard_service.dart';
 import 'package:nija/ui/app_theme.dart';
@@ -97,12 +98,13 @@ class _PermissionsSectionState extends ConsumerState<PermissionsSection> {
           'Registered with the system directly; Accessibility access is not required.',
           false,
         ),
-        (
-          Icons.power_settings_new_rounded,
-          'Start at login',
-          'Adds a Launch Agent in ~/Library/LaunchAgents; remove it from System Settings → General → Login Items.',
-          false,
-        ),
+        if (!BuildInfo.storeBuild)
+          (
+            Icons.power_settings_new_rounded,
+            'Start at login',
+            'Adds a Launch Agent in ~/Library/LaunchAgents; remove it from System Settings → General → Login Items.',
+            false,
+          ),
         (
           Icons.wifi_rounded,
           'Local network',

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:nija/core/build_info.dart';
 import 'package:nija/core/platform_info.dart';
 import 'package:nija/features/settings/permissions_section.dart';
 import 'package:nija/features/sync/sync_controller.dart';
@@ -25,6 +26,9 @@ class SettingsPage extends ConsumerWidget {
         .descriptor(s.backendId);
     final shell = ref.watch(desktopShellProvider);
     final status = ref.watch(syncControllerProvider);
+    final canClearRemote = ref
+        .read(syncControllerProvider.notifier)
+        .canDeleteRemoteHistory;
     final devices = ref.watch(deviceListProvider).value ?? const [];
     final theme = Theme.of(context);
 
@@ -51,6 +55,21 @@ class SettingsPage extends ConsumerWidget {
                     subtitle: descriptor?.displayName ?? s.backendId,
                     onTap: () => context.push('/settings/backend'),
                   ),
+                  if (s.syncsRemotely)
+                    SwitchRow(
+                      key: const ValueKey('remote-sync'),
+                      icon: Icons.sync_rounded,
+                      title: 'Sync with the database',
+                      subtitle: !s.remoteSyncEnabled
+                          ? 'Off: clips copied here stay on this device'
+                          : status.phase == SyncPhase.paused
+                          ? 'Paused by the group admin'
+                          : 'Send and receive clips with your other devices',
+                      value: s.remoteSyncEnabled,
+                      onChanged: (v) => notifier.update(
+                        (x) => x.copyWith(remoteSyncEnabled: v),
+                      ),
+                    ),
                   SettingRow(
                     icon: Icons.timer_outlined,
                     title: 'Poll interval',
@@ -147,6 +166,18 @@ class SettingsPage extends ConsumerWidget {
                     onChanged: (v) =>
                         notifier.update((x) => x.copyWith(skipSecretLike: v)),
                   ),
+                  if (PlatformInfo.isApple)
+                    SwitchRow(
+                      key: const ValueKey('skip-universal-clipboard'),
+                      icon: Icons.devices_other_rounded,
+                      title: 'Leave Universal Clipboard to its device',
+                      subtitle:
+                          'While syncing, skip copies that arrive from your other Apple devices through Universal Clipboard: Nija on that device syncs them under its own name. Turn off if that device does not run Nija.',
+                      value: s.skipUniversalClipboard,
+                      onChanged: (v) => notifier.update(
+                        (x) => x.copyWith(skipUniversalClipboard: v),
+                      ),
+                    ),
                   SwitchRow(
                     icon: Icons.image_outlined,
                     title: 'Capture images',
@@ -172,13 +203,14 @@ class SettingsPage extends ConsumerWidget {
                 SectionCard(
                   title: 'Desktop',
                   children: [
-                    SwitchRow(
-                      icon: Icons.power_settings_new_rounded,
-                      title: 'Start at login',
-                      value: s.autoStart,
-                      onChanged: (v) =>
-                          notifier.update((x) => x.copyWith(autoStart: v)),
-                    ),
+                    if (!BuildInfo.storeBuild)
+                      SwitchRow(
+                        icon: Icons.power_settings_new_rounded,
+                        title: 'Start at login',
+                        value: s.autoStart,
+                        onChanged: (v) =>
+                            notifier.update((x) => x.copyWith(autoStart: v)),
+                      ),
                     SwitchRow(
                       icon: Icons.visibility_off_outlined,
                       title: 'Start minimised to tray',
@@ -268,6 +300,60 @@ class SettingsPage extends ConsumerWidget {
                         'Scan or paste a pairing code from another device',
                     onTap: () => context.push('/settings/devices/join'),
                   ),
+                  if (s.syncsRemotely) ...const [
+                    _NewGroupRow(key: ValueKey('new-group')),
+                    _LeaveGroupRow(key: ValueKey('leave-group')),
+                  ],
+                ],
+              ),
+              SectionCard(
+                title: 'Data',
+                children: [
+                  _DeleteDataRow(
+                    key: const ValueKey('delete-local-history'),
+                    title: 'Delete history on this device',
+                    subtitle: s.syncsRemotely
+                        ? 'Every clip stored here, pinned and unsent ones too. Clips already in the database stay there.'
+                        : 'Every clip, pinned ones too',
+                    dialogTitle: 'Delete history on this device?',
+                    dialogBody: s.syncsRemotely
+                        ? 'Every clip on this device is deleted, pinned and '
+                              'not-yet-synced ones too. Clips already in the '
+                              'database stay there and on your other devices, '
+                              'and are not downloaded again. This cannot be '
+                              'undone.'
+                        : 'Every clip on this device is deleted, pinned ones '
+                              'too. This cannot be undone.',
+                    confirmLabel: 'Delete',
+                    run: () => ref
+                        .read(syncControllerProvider.notifier)
+                        .deleteLocalHistory(),
+                    done: (n) => 'Deleted $n clip${n == 1 ? '' : 's'}.',
+                  ),
+                  if (s.syncsRemotely)
+                    _DeleteDataRow(
+                      key: const ValueKey('delete-remote-history'),
+                      title:
+                          'Delete history in ${descriptor?.displayName ?? 'the database'}',
+                      subtitle: canClearRemote
+                          ? 'Every clip from every device. Devices stay paired.'
+                          : 'Only the admin, or a device it allows, can clear the group',
+                      enabled: canClearRemote,
+                      dialogTitle: 'Delete every clip in the database?',
+                      dialogBody:
+                          'Every clip and deletion record is removed from '
+                          '${descriptor?.displayName ?? 'the database'}, '
+                          'including those from your other devices. Devices, '
+                          'pairing and encryption keys are kept, so sync '
+                          'carries on. Each device keeps the history it already '
+                          'has until you delete it there. This cannot be undone.',
+                      confirmLabel: 'Delete everything',
+                      run: () => ref
+                          .read(syncControllerProvider.notifier)
+                          .deleteRemoteHistory(),
+                      done: (n) =>
+                          'Deleted $n row${n == 1 ? '' : 's'} from the database.',
+                    ),
                 ],
               ),
               SectionCard(
@@ -613,6 +699,311 @@ class _PlaintextRowState extends ConsumerState<_PlaintextRow> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : TextButton(onPressed: _purge, child: const Text('Clear')),
+    );
+  }
+}
+
+/// Starts a new group on the connected database with this device as admin.
+class _NewGroupRow extends ConsumerStatefulWidget {
+  const _NewGroupRow({super.key});
+
+  @override
+  ConsumerState<_NewGroupRow> createState() => _NewGroupRowState();
+}
+
+class _NewGroupRowState extends ConsumerState<_NewGroupRow> {
+  bool _busy = false;
+
+  Future<void> _confirm() async {
+    final controller = ref.read(syncControllerProvider.notifier);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          icon: Icon(Icons.restart_alt_rounded, color: scheme.error),
+          title: const Text('Start a new group on this database?'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Text(
+              'Every clip and every device is deleted from the database. '
+              'This device becomes the admin of a new group with a new '
+              'encryption key. Your other devices disconnect on their next '
+              'check-in; add them again with a pairing code. '
+              '${controller.isAdmin ? '' : 'Use this if the admin device is lost: it needs only the database credentials. '}'
+              'History already on this device stays. This cannot be undone.',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('new-group-confirm'),
+              style: FilledButton.styleFrom(
+                backgroundColor: scheme.error,
+                foregroundColor: scheme.onError,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Start new group'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!(ok ?? false)) return;
+    setState(() => _busy = true);
+    try {
+      await controller.startNewGroup();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('New group started. This device is its admin.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start a new group: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SettingRow(
+    icon: Icons.group_add_rounded,
+    title: 'Start a new group on this database',
+    subtitle: 'Become its admin; every device is removed',
+    trailing: _busy
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : null,
+    onTap: _busy ? null : _confirm,
+  );
+}
+
+/// Leaves the current group and goes back to local-only.
+class _LeaveGroupRow extends ConsumerStatefulWidget {
+  const _LeaveGroupRow({super.key});
+
+  @override
+  ConsumerState<_LeaveGroupRow> createState() => _LeaveGroupRowState();
+}
+
+class _LeaveGroupRowState extends ConsumerState<_LeaveGroupRow> {
+  bool _busy = false;
+
+  Future<void> _confirm() async {
+    final controller = ref.read(syncControllerProvider.notifier);
+    final lastAdmin =
+        controller.isSignedGroup &&
+        controller.isAdmin &&
+        !controller.hasOtherAdmin;
+    var deleteHistory = false;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            icon: Icon(Icons.logout_rounded, color: scheme.error),
+            title: const Text('Leave this group?'),
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 440),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'This device is removed from the group and forgets the '
+                    'database credentials and encryption key. It keeps '
+                    'recording clipboard history locally. To come back, pair '
+                    'it again.',
+                  ),
+                  if (lastAdmin) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'This is the only admin device. Without it nobody can '
+                      'add, pause or remove devices; making another device '
+                      'an admin first (Manage devices) avoids that.',
+                      style: TextStyle(color: scheme.error),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    key: const ValueKey('leave-delete-history'),
+                    contentPadding: EdgeInsets.zero,
+                    value: deleteHistory,
+                    onChanged: (v) =>
+                        setState(() => deleteHistory = v ?? false),
+                    title: const Text('Also delete history on this device'),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: const ValueKey('leave-group-confirm'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: scheme.error,
+                  foregroundColor: scheme.onError,
+                ),
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Leave'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (!(ok ?? false)) return;
+    setState(() => _busy = true);
+    try {
+      await controller.leaveGroup(deleteHistory: deleteHistory);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Left the group. Syncing is off.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not leave the group: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SettingRow(
+    icon: Icons.logout_rounded,
+    tint: Theme.of(context).colorScheme.error,
+    title: 'Leave this group',
+    subtitle: 'Stop syncing and forget the database credentials',
+    trailing: _busy
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : null,
+    onTap: _busy ? null : _confirm,
+  );
+}
+
+/// A destructive row: confirms, runs [run], reports the count it returns.
+class _DeleteDataRow extends StatefulWidget {
+  const _DeleteDataRow({
+    required this.title,
+    required this.subtitle,
+    required this.dialogTitle,
+    required this.dialogBody,
+    required this.confirmLabel,
+    required this.run,
+    required this.done,
+    this.enabled = true,
+    super.key,
+  });
+
+  final String title;
+  final String subtitle;
+  final String dialogTitle;
+  final String dialogBody;
+  final String confirmLabel;
+  final Future<int> Function() run;
+  final String Function(int removed) done;
+  final bool enabled;
+
+  @override
+  State<_DeleteDataRow> createState() => _DeleteDataRowState();
+}
+
+class _DeleteDataRowState extends State<_DeleteDataRow> {
+  bool _busy = false;
+
+  Future<void> _confirm() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          icon: Icon(Icons.delete_forever_rounded, color: scheme.error),
+          title: Text(widget.dialogTitle),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Text(widget.dialogBody),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('delete-data-confirm'),
+              style: FilledButton.styleFrom(
+                backgroundColor: scheme.error,
+                foregroundColor: scheme.onError,
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(widget.confirmLabel),
+            ),
+          ],
+        );
+      },
+    );
+    if (!(confirmed ?? false)) return;
+
+    setState(() => _busy = true);
+    try {
+      final removed = await widget.run();
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(widget.done(removed))));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not delete: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SettingRow(
+      icon: Icons.delete_sweep_outlined,
+      tint: scheme.error,
+      title: widget.title,
+      subtitle: widget.subtitle,
+      trailing: _busy
+          ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : TextButton(
+              onPressed: widget.enabled ? _confirm : null,
+              child: const Text('Delete'),
+            ),
     );
   }
 }

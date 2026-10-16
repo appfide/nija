@@ -56,19 +56,15 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
       if (ctx != null && ctx.mounted) {
         // One call per edge: the first scrolls a clip below the fold up
         // into view, the second one above it down; a visible clip stays put.
-        unawaited(
-          Scrollable.ensureVisible(
-            ctx,
-            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-            duration: AppTokens.fast,
-          ),
+        Scrollable.ensureVisible(
+          ctx,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+          duration: AppTokens.fast,
         );
-        unawaited(
-          Scrollable.ensureVisible(
-            ctx,
-            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
-            duration: AppTokens.fast,
-          ),
+        Scrollable.ensureVisible(
+          ctx,
+          alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+          duration: AppTokens.fast,
         );
       }
     });
@@ -157,7 +153,7 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
       case HistoryKeyAction.delete:
         final t = target();
         if (t == null || current == null) return KeyEventResult.ignored;
-        unawaited(ref.read(syncControllerProvider.notifier).delete(t.item.id));
+        unawaited(ref.read(syncControllerProvider.notifier).delete(t.item));
         if (current >= rows.length - 1) {
           _select(rows.length > 1 ? rows.length - 2 : null);
         }
@@ -485,6 +481,13 @@ class _ClipCardState extends ConsumerState<_ClipCard> {
     final controller = ref.read(syncControllerProvider.notifier);
     final store = ref.read(localStoreProvider);
     final ownId = ref.watch(settingsProvider.select((s) => s.deviceId));
+    final remote = ref.watch(settingsProvider.select((s) => s.syncsRemotely));
+    // Only the device that captured a clip may delete it from the group.
+    final deleteLabel = !remote
+        ? 'Delete'
+        : item.deviceId == ownId
+        ? 'Delete everywhere'
+        : 'Delete on this device';
     final targets = sendTargets(
       ref.watch(deviceListProvider).value ?? const [],
       ownId,
@@ -644,7 +647,7 @@ class _ClipCardState extends ConsumerState<_ClipCard> {
                               pinned: !entry.pinned,
                             );
                           case 'delete':
-                            await controller.delete(item.id);
+                            await controller.delete(item);
                         }
                       },
                       itemBuilder: (_) => [
@@ -677,7 +680,7 @@ class _ClipCardState extends ConsumerState<_ClipCard> {
                           value: 'delete',
                           child: _MenuRow(
                             Icons.delete_outline_rounded,
-                            'Delete everywhere',
+                            deleteLabel,
                             color: scheme.error,
                           ),
                         ),
@@ -712,7 +715,7 @@ class _ClipCardState extends ConsumerState<_ClipCard> {
                   color: scheme.onErrorContainer,
                 ),
               ),
-              onDismissed: (_) => controller.delete(item.id),
+              onDismissed: (_) => controller.delete(item),
               child: card,
             )
           : card,

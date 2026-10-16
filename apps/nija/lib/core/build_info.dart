@@ -14,6 +14,12 @@ abstract final class BuildInfo {
     defaultValue: 'local',
   );
 
+  /// App Store / Mac App Store build (`--dart-define=STORE_BUILD=true`).
+  /// Hides what a store build must not offer: installers for other
+  /// platforms, and start-at-login, which the Mac App Store sandbox blocks
+  /// until it moves to SMAppService.
+  static const bool storeBuild = bool.fromEnvironment('STORE_BUILD');
+
   /// Public repository.
   static const String repoUrl = 'https://github.com/appfide/nija';
 }

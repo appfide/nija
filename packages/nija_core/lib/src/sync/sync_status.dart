@@ -15,6 +15,10 @@ enum SyncPhase {
   /// Last operation failed; will retry unless [SyncStatus.authFailed].
   error,
 
+  /// The group admin paused this device. Heartbeats continue so it notices
+  /// the resume; nothing is pushed or pulled.
+  paused,
+
   /// This device was blocked, removed, or its access expired. The engine
   /// has stopped itself; the app must forget the credentials.
   revoked,

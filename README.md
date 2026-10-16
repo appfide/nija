@@ -1,12 +1,12 @@
 <img src="docs/icon.png" width="96" alt="Nija">
 
-# Nija — Self-hosted Clipboard
+# Nija: Self-hosted Clipboard
 
 [![CI](https://github.com/appfide/nija/actions/workflows/ci.yml/badge.svg)](https://github.com/appfide/nija/actions/workflows/ci.yml)
 [![Release](https://github.com/appfide/nija/actions/workflows/release.yml/badge.svg)](https://github.com/appfide/nija/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> **निज** *(nija)* is Sanskrit for **"one's own"** — what is innate to you and belongs to nobody else.
+> **निज** *(nija)* is Sanskrit for **"one's own"**: what is innate to you and belongs to nobody else.
 > That is the whole product: your clipboard, on your database, under your keys.
 
 Clipboard history that syncs across **macOS, Windows, Linux, Android and iOS** through a database **you** provide. There is no Appfide server in the loop: the app talks directly to your Supabase, PocketBase, CouchDB, Firestore or MongoDB with the credentials you enter in Settings.
@@ -65,9 +65,9 @@ Details, prompts and data-protection notes: [docs/platforms.md](docs/platforms.m
 
 ## The name
 
-**निज** (*nija*) is Sanskrit for "one's own" — that which is innate, personal, not borrowed from anyone.
+**निज** (*nija*) is Sanskrit for "one's own": that which is innate, personal, not borrowed from anyone.
 
-The name is the architecture. Every other clipboard sync app puts a company between you and your own text: their server, their account, their retention policy, their breach. Nija has no server to breach. You point the app at a database you already control — a Supabase project, a PocketBase binary on a home server, a CouchDB instance, Firestore, MongoDB — and the devices talk to it directly. Turn on end-to-end encryption and even that database only ever holds ciphertext it cannot read.
+The name is the architecture. Every other clipboard sync app puts a company between you and your own text: their server, their account, their retention policy, their breach. Nija has no server to breach. You point the app at a database you already control (a Supabase project, a PocketBase binary on a home server, a CouchDB instance, Firestore, MongoDB), and the devices talk to it directly. Turn on end-to-end encryption and even that database only ever holds ciphertext it cannot read.
 
 Nothing of yours passes through Appfide. There is nothing to sign up for, nothing to cancel, and nothing for us to lose.
 

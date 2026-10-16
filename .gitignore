@@ -1,5 +1,5 @@
 # =============================================================================
-# Secrets / credentials — NEVER commit. Also enforced by gitleaks (pre-commit +
+# Secrets / credentials: NEVER commit. Also enforced by gitleaks (pre-commit +
 # CI), scripts/verify_secrets.sh, and GitHub push rules on the repository.
 # =============================================================================
 # Environment files (keep the documented template only)

@@ -1,4 +1,4 @@
-# Root analysis options — workspace packages `include` this file.
+# Shared analysis options: workspace packages `include` this file.
 include: package:very_good_analysis/analysis_options.yaml
 
 analyzer:

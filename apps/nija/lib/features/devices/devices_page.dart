@@ -72,7 +72,7 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
           context,
           title: 'Block ${d.name}?',
           message:
-              'Other devices will ignore its clips and it will stop syncing the next time it checks in (about a minute). You can unblock it later.',
+              'Other devices will ignore its clips. The next time it checks in (about a minute) it stops syncing and forgets the database credentials, so it has to be paired again. To stop it for a while instead, pause it.',
           action: 'Block',
           destructive: true,
         );
@@ -81,6 +81,19 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
         }
       case 'unblock':
         await _run(() => controller.unblockDevice(d.id), 'Unblocked ${d.name}');
+      case 'pause':
+        final ok = await confirm(
+          context,
+          title: 'Pause ${d.name}?',
+          message:
+              'On its next check-in (about a minute) it stops sending and receiving but stays paired. Clips copied on other devices while it is paused never reach it, and what it copies meanwhile stays on it. Like every device setting this is honoured by the app: devices on Nija 0.4.2 or older ignore it. Resume it whenever you like.',
+          action: 'Pause',
+        );
+        if (ok) {
+          await _run(() => controller.pauseDevice(d.id), 'Paused ${d.name}');
+        }
+      case 'resume':
+        await _run(() => controller.resumeDevice(d.id), 'Resumed ${d.name}');
       case 'role':
         final role = await pickRole(context, d.role);
         if (role != null && role != d.role) {
@@ -102,6 +115,28 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
               ? '${d.name}: no expiry'
               : '${d.name}: access ends in ${accessDurations[dur]!.toLowerCase()}',
         );
+      case 'permissions':
+        final perms = await pickPermissions(context, d);
+        if (perms == null) return;
+        await _run(
+          () => controller.setDevicePermissions(d.id, perms),
+          'Updated permissions for ${d.name}',
+        );
+      case 'admin':
+        final ok = await confirm(
+          context,
+          title: 'Make ${d.name} an admin?',
+          message:
+              'It receives the group admin key on its next check-in (about a minute) and can then do everything this device can: add, pause, block and remove devices, grant permissions, rotate the encryption key and delete the database history. This cannot be taken back: the device keeps the key even if you remove it later.',
+          action: 'Make admin',
+          destructive: true,
+        );
+        if (ok) {
+          await _run(
+            () => controller.makeAdmin(d.id),
+            '${d.name} will become an admin',
+          );
+        }
       case 'remove':
         final ok = await confirm(
           context,
@@ -182,8 +217,9 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
             ? 0
             : switch (d.status) {
                 DeviceStatus.active => d.isPending ? 2 : 1,
-                DeviceStatus.blocked => 3,
-                DeviceStatus.removed => 4,
+                DeviceStatus.paused => 3,
+                DeviceStatus.blocked => 4,
+                DeviceStatus.removed => 5,
               };
         final r = rank(a).compareTo(rank(b));
         return r != 0 ? r : b.lastSeen.compareTo(a.lastSeen);
@@ -311,6 +347,7 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
                                   onAction: d.id == s.deviceId || !canEdit
                                       ? null
                                       : (a) => _onAction(d, a),
+                                  canGrant: signed && controller.isAdmin,
                                 ),
                             ],
                     ),

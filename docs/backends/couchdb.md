@@ -21,7 +21,7 @@ Document layout (one database, discriminated by `kind`):
 | `_id` | `kind` | fields |
 |---|---|---|
 | `clip:<uuid>` | `clip` | `device_id, device_name, content_type, content, blob_ref, content_hash, size_bytes, encrypted, nonce, created_at, updated_at, deleted_at, target_device_id, key_version, sig` |
-| `device:<uuid>` | `device` | `name, platform, last_seen, app_version, status, role, expires_at, paired_by, sign_pub, box_pub, admin, admin_pub, membership_version, membership_sig, key_version, key_envelope` (see [devices.md](../devices.md)) |
+| `device:<uuid>` | `device` | `name, platform, last_seen, app_version, status, role, expires_at, paired_by, sign_pub, box_pub, admin, admin_pub, membership_version, membership_sig, key_version, key_envelope, permissions, admin_envelope` (see [devices.md](../devices.md)) |
 
 No migration is needed from 0.1.0; documents are schema-less.
 

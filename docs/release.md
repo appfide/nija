@@ -130,8 +130,8 @@ side of that is scripted.
    ```
 
    It checks the certificate is the right kind and actually matches the private
-   key — a mismatch otherwise surfaces as an unexplained signing failure in CI
-   months later — then builds the `.p12` with a generated password and sets all
+   key (a mismatch otherwise surfaces as an unexplained signing failure in CI
+   months later), then builds the `.p12` with a generated password and sets all
    five secrets through `gh`. Nothing is printed.
 
 The next release signs and notarizes the dmg. The verification step fails the

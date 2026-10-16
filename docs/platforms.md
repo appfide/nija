@@ -29,6 +29,20 @@ reading the clipboard:
 Pairing: scanning a QR code needs the camera (Android, iOS). Desktops paste
 the copied code instead.
 
+## Universal Clipboard
+
+On macOS and iOS, Apple's Universal Clipboard copies what you copy on one
+Apple device onto the others signed in to the same Apple Account. If Nija
+recorded that copy too, the clip would carry the receiving device's name,
+and the original synced by the device that made it would then be dropped as
+an echo, so every device would show the clip as its own.
+
+While syncing, Nija therefore skips clipboard content marked
+`com.apple.is-remote-clipboard` and leaves it to Nija on the device it came
+from. *Settings → Capture → Leave Universal Clipboard to its device* turns
+this off, for when that device does not run Nija. In local-only mode the
+copy is always recorded, since nothing else would bring it in.
+
 ## Mobile capture flow
 
 Copy in any app → open Nija (or tap **Capture**) → the app reads

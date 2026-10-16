@@ -8,7 +8,7 @@ cd nija
 ./scripts/bootstrap.sh        # installs pre-commit hooks, fetches deps
 ```
 
-Requirements: Flutter ≥ 3.44 (stable), `pre-commit`, `gitleaks`. On macOS: `brew install pre-commit gitleaks`.
+Requirements: Flutter ≥ 3.44 (stable; CI pins 3.47.5), `pre-commit`, `gitleaks`. On macOS: `brew install pre-commit gitleaks`.
 
 ## Workflow
 

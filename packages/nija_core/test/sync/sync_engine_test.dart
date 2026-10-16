@@ -95,6 +95,23 @@ void main() {
     expect(storeA.items[remote.id]!.isDeleted, isTrue);
   });
 
+  test("another device's tombstone is kept local", () async {
+    final theirs = textItem('from B', deviceId: 'dev-b', deviceName: 'B');
+    backendA.injectRemote(theirs);
+    await engineA.start();
+    storeA.capture(
+      theirs.copyWith(
+        content: '',
+        deletedAt: DateTime.now().toUtc(),
+        updatedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await engineA.syncNow();
+    expect(shared.items[theirs.id]!.isDeleted, isFalse);
+    expect(shared.items[theirs.id]!.content, 'from B');
+    expect(storeA.unsynced, isEmpty);
+  });
+
   test('encrypts on push and decrypts on pull', () async {
     final cipher = await ClipCipher.fromPassphrase('pw', keyScope: 'memory');
     await engineA.dispose();
@@ -335,7 +352,10 @@ void _membershipTests() {
   late FakeLocalStore store;
   final revoked = <String>[];
 
-  SyncEngine engine({bool assumeRegistered = false}) {
+  SyncEngine engine({
+    bool assumeRegistered = false,
+    Map<String, int>? seen,
+  }) {
     final e = SyncEngine(
       backend: backend,
       store: store,
@@ -343,6 +363,7 @@ void _membershipTests() {
       pollInterval: const Duration(hours: 1),
       heartbeatInterval: const Duration(hours: 1),
       assumeRegistered: assumeRegistered,
+      seenMembershipVersions: seen,
     );
     e.statusStream.listen((s) {
       if (s.phase == SyncPhase.revoked) revoked.add(s.revokedReason!);
@@ -384,11 +405,63 @@ void _membershipTests() {
   });
 
   test('a removed row with assumeRegistered means revoked', () async {
-    final e = engine(assumeRegistered: true);
+    // The device that forgot us is still there, and we knew it.
+    shared.devices['dev-b'] = deviceB;
+    final e = engine(assumeRegistered: true, seen: {'dev-a': 0, 'dev-b': 0});
     await e.start();
     expect(e.status.phase, SyncPhase.revoked);
     expect(revoked, ['removed']);
     expect(shared.devices.containsKey('dev-a'), isFalse);
+    await e.dispose();
+  });
+
+  test(
+    'an empty device list after a reset re-registers, not revokes',
+    () async {
+      // A device we knew exists, so a missing own row means "removed"...
+      shared.devices['dev-b'] = deviceB;
+      final forgotten = engine(assumeRegistered: true, seen: {'dev-b': 0});
+      await forgotten.start();
+      expect(revoked, ['removed']);
+      await forgotten.dispose();
+
+      // ...but with no rows at all the tables were dropped and recreated.
+      revoked.clear();
+      shared.devices.clear();
+      final e = engine(assumeRegistered: true);
+      await e.start();
+      expect(revoked, isEmpty);
+      expect(e.status.phase, SyncPhase.idle);
+      expect(shared.devices.keys, ['dev-a']);
+      await e.dispose();
+
+      // ...and so do rows that only appeared after the reset: another device
+      // that registered before us is not proof we were removed.
+      revoked.clear();
+      shared.devices
+        ..clear()
+        ..['dev-new'] = Device(
+          id: 'dev-new',
+          name: 'New',
+          platform: 'test',
+          lastSeen: DateTime.now().toUtc(),
+        );
+      final newcomer = engine(
+        assumeRegistered: true,
+        seen: {'dev-a': 0, 'dev-b': 0},
+      );
+      await newcomer.start();
+      expect(revoked, isEmpty);
+      expect(shared.devices.keys, containsAll(['dev-a', 'dev-new']));
+      await newcomer.dispose();
+    },
+  );
+
+  test('legacy groups remember device ids for that check', () async {
+    shared.devices['dev-b'] = deviceB;
+    final e = engine();
+    await e.start();
+    expect(e.seenMembershipVersions.keys, containsAll(['dev-a', 'dev-b']));
     await e.dispose();
   });
 
@@ -434,6 +507,130 @@ void _membershipTests() {
     expect(me.pairedBy, 'dev-b');
     expect(e.role, DeviceRole.sendOnly);
     expect(e.status.role, DeviceRole.sendOnly);
+    await e.dispose();
+  });
+
+  test('a paused device holds sync and skips the paused period', () async {
+    shared.devices['dev-a'] = deviceA.copyWith(status: DeviceStatus.paused);
+    final changes = <bool>[];
+    final e = SyncEngine(
+      backend: backend,
+      store: store,
+      device: deviceA,
+      pollInterval: const Duration(hours: 1),
+      heartbeatInterval: const Duration(hours: 1),
+      onPausedChanged: ({required paused}) => changes.add(paused),
+    );
+    await e.start();
+    expect(e.isPaused, isTrue);
+    expect(e.status.phase, SyncPhase.paused);
+    expect(revoked, isEmpty);
+
+    // Written by another device, and captured here, while paused.
+    backend.injectRemote(textItem('while paused', deviceId: 'dev-b'));
+    store.capture(textItem('captured while paused'));
+    await e.syncNow();
+    expect(store.items.values.map((i) => i.content), [
+      'captured while paused',
+    ]);
+    expect(shared.items.values.map((i) => i.content), ['while paused']);
+
+    // Resume: neither crosses over, later clips do.
+    await backend.updateDevice(
+      shared.devices['dev-a']!.copyWith(status: DeviceStatus.active),
+    );
+    await e.refreshDevices();
+    expect(e.isPaused, isFalse);
+    backend.injectRemote(textItem('after resume', deviceId: 'dev-b'));
+    await e.syncNow();
+    expect(e.status.phase, isNot(SyncPhase.paused));
+    expect(
+      store.items.values.map((i) => i.content),
+      unorderedEquals(['captured while paused', 'after resume']),
+    );
+    expect(
+      shared.items.values.map((i) => i.content),
+      unorderedEquals(['while paused', 'after resume']),
+    );
+    expect(changes, [true, false]);
+    await e.dispose();
+  });
+
+  test('deletions and sends queued while paused go out on resume', () async {
+    final old = textItem('before pause');
+    store.capture(old);
+    final e = engine();
+    await e.start();
+    await backend.updateDevice(
+      shared.devices['dev-a']!.copyWith(status: DeviceStatus.paused),
+    );
+    await e.refreshDevices();
+    expect(e.isPaused, isTrue);
+
+    final now = DateTime.now().toUtc();
+    store
+      ..capture(old.copyWith(content: '', deletedAt: now, updatedAt: now))
+      ..capture(
+        ClipItem.create(
+          id: 'sent-to-b',
+          deviceId: 'dev-a',
+          deviceName: 'A',
+          type: ClipContentType.text,
+          content: 'for B',
+          contentHash: sha256Hex('for B'),
+          sizeBytes: 5,
+          now: now,
+          targetDeviceId: 'dev-b',
+        ),
+      )
+      ..capture(textItem('copied while paused'));
+    await e.syncNow();
+    expect(shared.items[old.id]!.isDeleted, isFalse);
+
+    await backend.updateDevice(
+      shared.devices['dev-a']!.copyWith(status: DeviceStatus.active),
+    );
+    await e.refreshDevices();
+    await e.syncNow();
+    expect(shared.items[old.id]!.isDeleted, isTrue);
+    expect(shared.items['sent-to-b']!.content, 'for B');
+    expect(
+      shared.items.values.map((i) => i.content),
+      isNot(contains('copied while paused')),
+    );
+    expect(store.unsynced, isEmpty);
+    await e.dispose();
+  });
+
+  test('a resume missed while stopped still skips the pause', () async {
+    shared.devices['dev-a'] = deviceA;
+    backend.injectRemote(textItem('while paused', deviceId: 'dev-b'));
+    store.capture(textItem('captured while paused'));
+    final e = SyncEngine(
+      backend: backend,
+      store: store,
+      device: deviceA,
+      pollInterval: const Duration(hours: 1),
+      heartbeatInterval: const Duration(hours: 1),
+      paused: true,
+    );
+    await e.start();
+    expect(e.isPaused, isFalse);
+    expect(store.items.values.map((i) => i.content), [
+      'captured while paused',
+    ]);
+    expect(store.unsynced, isEmpty);
+    expect(shared.items.values.map((i) => i.content), ['while paused']);
+    await e.dispose();
+  });
+
+  test('clips from paused devices are skipped on pull', () async {
+    shared.devices['dev-b'] = deviceB.copyWith(status: DeviceStatus.paused);
+    backend.injectRemote(textItem('from paused', deviceId: 'dev-b'));
+    final e = engine();
+    await e.start();
+    expect(store.items, isEmpty);
+    expect(e.trustedDevices.keys, isNot(contains('dev-b')));
     await e.dispose();
   });
 
@@ -523,6 +720,10 @@ void _membershipTests() {
     await e.blockDevice('dev-b');
     expect(shared.devices['dev-b']!.status, DeviceStatus.blocked);
     await e.unblockDevice('dev-b');
+    await e.pauseDevice('dev-b');
+    expect(shared.devices['dev-b']!.status, DeviceStatus.paused);
+    await e.resumeDevice('dev-b');
+    expect(shared.devices['dev-b']!.status, DeviceStatus.active);
     expect(shared.devices['dev-b']!.status, DeviceStatus.active);
     await e.setDeviceRole('dev-b', DeviceRole.receiveOnly);
     expect(shared.devices['dev-b']!.role, DeviceRole.receiveOnly);

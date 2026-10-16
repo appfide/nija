@@ -54,6 +54,65 @@ class _BackendSetupPageState extends ConsumerState<BackendSetupPage> {
     });
   }
 
+  /// Creates the Supabase tables through the Management API with a personal
+  /// access token the user pastes once, then tests again.
+  Future<void> _autoSetup(String script) async {
+    final controller = ref.read(syncControllerProvider.notifier)
+      ..holdCapture(held: true);
+    final (String, String)? input;
+    try {
+      input = await showDialog<(String, String)>(
+        context: context,
+        builder: (_) => _SupabaseTokenDialog(
+          projectRef: SupabaseBackend.projectRefOf(_values['url'] ?? ''),
+        ),
+      );
+    } finally {
+      controller.holdCapture(held: false);
+    }
+    if (input == null || !mounted) return;
+    final (projectRef, token) = input;
+    setState(() => _busy = true);
+    try {
+      await SupabaseBackend.runSetup(
+        projectRef: projectRef,
+        accessToken: token,
+        sql: script,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Database set up. Checking it again.')),
+        );
+      setState(() => _busy = false);
+      await _test();
+    } on BackendException catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _copySetup(String script) async {
+    // Not recorded in history: it is setup text, not something the user
+    // copied.
+    await ref.read(syncControllerProvider.notifier).copyTextUnrecorded(script);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Setup SQL copied. Paste it into the SQL editor, run it, then '
+            'test again.',
+          ),
+        ),
+      );
+  }
+
   Future<void> _test() async {
     if (!(_formKey.currentState?.validate() ?? true)) return;
     setState(() {
@@ -144,13 +203,18 @@ class _BackendSetupPageState extends ConsumerState<BackendSetupPage> {
             LayoutBuilder(
               builder: (context, box) {
                 final cols = box.maxWidth >= 560 ? 3 : 2;
-                return GridView.count(
-                  crossAxisCount: cols,
+                return GridView(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: cols == 3 ? 2.0 : 1.7,
+                  // A fixed height, not an aspect ratio: the tiles hold the
+                  // same content at every width, and a ratio left them too
+                  // short on narrow phones (an overflow at 430 pt wide).
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10,
+                    mainAxisExtent: 120,
+                  ),
                   children: [
                     for (final d in registry.descriptors)
                       _BackendTile(
@@ -226,6 +290,23 @@ class _BackendSetupPageState extends ConsumerState<BackendSetupPage> {
                   detail: _schema!.ok
                       ? 'All tables and collections found.'
                       : 'Missing: ${_schema!.missing.join(', ')}\n${_schema!.hint ?? ''}',
+                  actions: [
+                    if (_schema!.setupScript case final script?
+                        when _backendId == SupabaseBackend.descriptorStatic.id)
+                      FilledButton.icon(
+                        key: const ValueKey('auto-setup'),
+                        icon: const Icon(Icons.auto_fix_high_rounded, size: 16),
+                        label: const Text('Set up automatically'),
+                        onPressed: _busy ? null : () => _autoSetup(script),
+                      ),
+                    if (_schema!.setupScript case final script?)
+                      FilledButton.tonalIcon(
+                        key: const ValueKey('copy-setup-sql'),
+                        icon: const Icon(Icons.content_copy_rounded, size: 16),
+                        label: const Text('Copy setup SQL'),
+                        onPressed: () => _copySetup(script),
+                      ),
+                  ],
                 ),
               ],
             ],
@@ -388,11 +469,125 @@ class _BackendTileState extends State<_BackendTile> {
   }
 }
 
+/// Asks for a Supabase personal access token (and the project ref when the
+/// URL does not reveal it). Returns `(projectRef, token)`; nothing is saved.
+class _SupabaseTokenDialog extends StatefulWidget {
+  const _SupabaseTokenDialog({required this.projectRef});
+  final String? projectRef;
+
+  @override
+  State<_SupabaseTokenDialog> createState() => _SupabaseTokenDialogState();
+}
+
+class _SupabaseTokenDialogState extends State<_SupabaseTokenDialog> {
+  final _token = TextEditingController();
+  late final _ref = TextEditingController(text: widget.projectRef ?? '');
+
+  @override
+  void dispose() {
+    _token.dispose();
+    _ref.dispose();
+    super.dispose();
+  }
+
+  bool get _ready =>
+      _token.text.trim().isNotEmpty && _ref.text.trim().isNotEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      icon: const Icon(Icons.auto_fix_high_rounded),
+      title: const Text('Set up the database'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'The key Nija syncs with cannot create tables. A Supabase '
+              'personal access token can: Nija sends it to Supabase once to '
+              'run the setup, and does not keep it. Clipboard capture is '
+              'paused while this window is open, so copying the token is '
+              'not recorded.',
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                label: const Text('Create a token'),
+                onPressed: () => launchUrl(
+                  Uri.parse('https://supabase.com/dashboard/account/tokens'),
+                  mode: LaunchMode.externalApplication,
+                ),
+              ),
+            ),
+            if (widget.projectRef == null) ...[
+              TextField(
+                key: const ValueKey('setup-project-ref'),
+                controller: _ref,
+                decoration: const InputDecoration(
+                  labelText: 'Project ref',
+                  helperText: 'Project Settings → General → Project ID',
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 12),
+            ],
+            TextField(
+              key: const ValueKey('setup-token'),
+              controller: _token,
+              obscureText: true,
+              enableSuggestions: false,
+              autocorrect: false,
+              decoration: const InputDecoration(
+                labelText: 'Personal access token',
+                hintText: 'sbp_…',
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You can revoke the token in the Supabase dashboard as soon as '
+              'this is done.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('setup-run'),
+          onPressed: _ready
+              ? () => Navigator.pop(context, (
+                  _ref.text.trim(),
+                  _token.text.trim(),
+                ))
+              : null,
+          child: const Text('Set up'),
+        ),
+      ],
+    );
+  }
+}
+
 class _Result extends StatelessWidget {
-  const _Result({required this.ok, required this.title, required this.detail});
+  const _Result({
+    required this.ok,
+    required this.title,
+    required this.detail,
+    this.actions = const [],
+  });
   final bool ok;
   final String title;
   final String detail;
+  final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
@@ -430,6 +625,10 @@ class _Result extends StatelessWidget {
                   detail,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                if (actions.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(spacing: 8, runSpacing: 8, children: actions),
+                ],
               ],
             ),
           ),

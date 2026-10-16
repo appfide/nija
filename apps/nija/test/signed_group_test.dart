@@ -377,6 +377,115 @@ void _defaultSecurityTests() {
     await host.dispose();
   });
 
+  test(
+    'the admin lets a member clear the database, then makes it admin',
+    () async {
+      final shared = MemoryStore();
+      final host = await _boot(
+        _host.copyWith(encryptionEnabled: false),
+        shared,
+      );
+      await host.sync.start();
+      await host.sync.secureGroup();
+      final session = await host.sync.createPairing(role: DeviceRole.full);
+      final joiner = await _boot(
+        const AppSettings(deviceId: 'j', deviceName: 'J', onboarded: true),
+        shared,
+      );
+      await joiner.sync.start();
+      await joiner.sync.joinFromPairing(
+        await PairingCodec.open(session.code, session.pin),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      final id = joiner.c.read(settingsProvider).deviceId;
+      expect(joiner.sync.canDeleteRemoteHistory, isFalse);
+      await expectLater(joiner.sync.deleteRemoteHistory(), throwsStateError);
+
+      await host.sync.setDevicePermissions(id, {DevicePermission.clearHistory});
+      await joiner.sync.refreshDevices();
+      expect(joiner.sync.canDeleteRemoteHistory, isTrue);
+      expect(joiner.sync.isAdmin, isFalse);
+      final old = _clip('old', device: 'host-id');
+      shared.items[old.id] = old;
+      expect(await joiner.sync.deleteRemoteHistory(), 1);
+      expect(shared.items, isEmpty);
+
+      await host.sync.makeAdmin(id);
+      await joiner.sync.refreshDevices();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(joiner.sync.isAdmin, isTrue);
+      expect(joiner.sync.adminFingerprint, host.sync.adminFingerprint);
+      await joiner.dispose();
+      await host.dispose();
+    },
+  );
+
+  test(
+    'a member whose admin is lost starts a new group and leads it',
+    () async {
+      final shared = MemoryStore();
+      final host = await _boot(_host, shared);
+      await host.c.read(settingsRepositoryProvider).savePassphrase('old pass');
+      await host.sync.start();
+      await host.sync.secureGroup();
+      final session = await host.sync.createPairing(
+        role: DeviceRole.full,
+        includePassphrase: true,
+      );
+      final joiner = await _boot(
+        const AppSettings(deviceId: 'j', deviceName: 'J', onboarded: true),
+        shared,
+      );
+      await joiner.sync.start();
+      await joiner.sync.joinFromPairing(
+        await PairingCodec.open(session.code, session.pin),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(joiner.sync.isAdmin, isFalse);
+      final oldAdmin = host.sync.adminFingerprint;
+
+      await joiner.sync.startNewGroup();
+      final id = joiner.c.read(settingsProvider).deviceId;
+      expect(joiner.sync.isAdmin, isTrue);
+      expect(joiner.sync.isSignedGroup, isTrue);
+      expect(joiner.sync.adminFingerprint, isNot(oldAdmin));
+      expect(shared.devices.keys, [id]);
+      expect(
+        await joiner.c.read(settingsRepositoryProvider).loadPassphrase(),
+        isNot('old pass'),
+      );
+
+      // The old admin finds itself removed and forgets the credentials.
+      await host.sync.refreshDevices();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(host.c.read(revocationProvider)?.reason, 'removed');
+      expect(host.c.read(settingsProvider).backendId, 'memory');
+      await joiner.dispose();
+      await host.dispose();
+    },
+  );
+
+  test('leaving a group removes the row and forgets the group', () async {
+    final shared = MemoryStore();
+    final host = await _boot(_host.copyWith(encryptionEnabled: false), shared);
+    await host.sync.start();
+    await host.sync.secureGroup();
+    expect(host.sync.hasOtherAdmin, isFalse);
+    final repo = host.c.read(settingsRepositoryProvider);
+    final scope = host.c.read(settingsProvider).backendScope;
+
+    await host.sync.leaveGroup();
+
+    expect(shared.devices.containsKey('host-id'), isFalse);
+    expect(host.c.read(settingsProvider).backendId, 'memory');
+    expect(host.c.read(settingsProvider).backendValues, isEmpty);
+    expect(await repo.loadAdminKey(scope), isNull);
+    expect(repo.loadTrustedAdminPub(scope), isNull);
+    expect(host.sync.isAdmin, isFalse);
+    expect(host.status.phase, isNot(SyncPhase.error));
+    await host.dispose();
+  });
+
   test('concurrent restarts never leave two engines running', () async {
     final shared = MemoryStore();
     final host = await _boot(_host.copyWith(encryptionEnabled: false), shared);

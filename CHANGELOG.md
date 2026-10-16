@@ -6,6 +6,30 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-16
+
+### Added
+- **Delete history** (*Settings → Data*): *Delete history on this device* removes every local clip, pinned ones too, and leaves the database alone; clips already there are not downloaded again. *Delete history in the database* removes every clip and deletion record from the connected database for all devices. Devices, pairing and keys stay, so sync carries on. In a signed group only the admin, or a member it gave the permission, can do this.
+- **Pause a device** (*Settings → Devices → Manage devices*, admin only): a paused device stays paired and keeps its credentials but sends and receives nothing. Clips copied elsewhere while it is paused never reach it, and what it copies meanwhile stays on it. *Resume* brings it back. Unlike *Block*, it does not have to be paired again. Devices on 0.4.2 or older do not know this status and keep syncing.
+- **Permissions and more admins** (*Manage devices*, admin of a signed group): *Permissions…* lets a member delete the database history without becoming an admin; *Make admin…* hands a paired device the group admin key, sealed to it, so it can manage the group too. Both are signed with the membership, so a member cannot grant them to itself. Supabase and PocketBase need two new device columns for this ([upgrade notes](docs/backends/supabase.md#upgrading-to-05)); without them the app refuses the grant and leaves the device unchanged.
+- **Leave this group** and **Start a new group on this database** (*Settings → Devices*). Leaving removes this device from the group and forgets its credentials and keys; starting a new group wipes the database's clips and devices and makes this device the admin of a fresh group with new keys. The second is also the way back when the admin device is lost.
+- **Sync with the database** switch (*Settings → Sync*): turns database sync off on this device only. Clipboard history keeps being recorded locally; nothing copied while it is off is sent, and clips from other devices arrive once it is back on.
+
+### Changed
+- **Universal Clipboard no longer relabels clips.** A copy that reached a Mac or iPhone through Apple's Universal Clipboard was recorded again on that device under its own name, and the original from the device that made it was then dropped as an echo, so every device showed the clip as its own. While syncing, Nija now leaves such copies to the device they came from (*Settings → Capture → Leave Universal Clipboard to its device*, on by default).
+- **A clip can only be deleted from the group by the device that copied it.** On every other device the menu now says *Delete on this device* and only removes the local copy. Before, deleting another device's clip pushed a deletion signed with the wrong key: the database copy was emptied, but signed groups rejected the deletion, so other devices kept the clip and the device that copied it never saw the change. The sync engine now refuses to push such a deletion.
+- **Dropping and recreating the database tables no longer disconnects every device.** A device whose row is missing now disconnects only if a device it already knew is still listed; otherwise the database was reset, and it registers again (the admin also signs its own row again), whichever device gets back first. Before, each device concluded it had been removed and deleted its credentials and passphrase.
+- **Supabase with missing tables or columns** now reports *Connected* plus a schema check listing what is missing, and two ways to fix it. **Set up automatically** asks once for a Supabase personal access token and runs the setup through the Supabase Management API; the token is sent only to Supabase, for that one request, is never stored, and clipboard capture is paused while the dialog is open so copying it is not recorded. **Copy setup SQL** gives the same script to run by hand: generated for your table names and sign-in mode, it creates the tables or adds the missing columns, turns on row level security and enables realtime, and is safe to run again. Before, the app said *Connection failed: Could not find the table 'public.clip_items' in the schema cache*. Sync shows the same advice and retries until the tables exist.
+- A keychain that times out is no longer read as "no keys": this device's signing keys are never replaced because of a slow keychain prompt (peers would reject every clip signed with new ones), and a credential delete the keychain did not confirm is retried rather than coming back on the next launch. Secret fields of the database form are read together, so a pending prompt costs one wait instead of one per field.
+- Supabase personal access tokens (`sbp_…`) are recognised as credentials: *Skip keys and tokens* skips them and logs redact them.
+- The macOS app renders with Skia instead of Impeller: on Flutter 3.47 Impeller dropped or garbled single letters in labels.
+- **App Store and Mac App Store builds** (`STORE_BUILD=true`, set by `scripts/build_appstore.sh`) leave out the installers for other platforms and, in the sandboxed Mac build, *Start at login*. The script now also regenerates the Flutter config before the macOS archive (it used to ship the version of whatever was built last) and puts the provisioning profile on the Release configuration.
+- On iPad and other wide layouts the side rail keeps clear of the status bar; the database tiles no longer overflow on 430 pt wide phones.
+- Store screenshots are generated from the app itself: `test_screenshots/store_shots_test.dart` renders the screens with demo data, `tool/store_shots/compose.py` frames them.
+- CI and release builds use Flutter 3.47.5 (from 3.44.4).
+
+## [0.4.2] - 2026-09-30
+
 ### Added
 - **Filters on the history list**: All, Text, Links, Images and Pinned. They combine with search.
 - **Keyboard control on desktop.** The search field takes focus when the window opens and keeps it: the arrow keys move a selection through the list, Enter copies it, Shift+Enter previews it, `⌘1` to `⌘9` (Ctrl on Windows and Linux) copy by position, `⌘P` pins, `⌘⌫` deletes while the search is empty, and Esc clears the search and then hides the window. The keyboard button beside *Sync now* lists them.
@@ -17,19 +41,19 @@ All notable changes to this project are documented here. Format follows
 ## [0.4.1] - 2026-09-23
 
 ### Added
-- **Every desktop installer is now launched before it is published.** Verification proved an installer contained the right app; it could not tell whether that app starts. `scripts/smoke_launch.sh` unpacks the dmg, deb and Windows zip, starts the binary hidden, and fails the release if it is not still running seconds later — the signature of a build that cannot find a library or dies initialising its database. Android and iOS are not covered: launching them needs an emulator or simulator, and the actions that provide one are not on this repository's allowlist.
+- **Every desktop installer is now launched before it is published.** Verification proved an installer contained the right app; it could not tell whether that app starts. `scripts/smoke_launch.sh` unpacks the dmg, deb and Windows zip, starts the binary hidden, and fails the release if it is not still running seconds later, the signature of a build that cannot find a library or dies initialising its database. Android and iOS are not covered: launching them needs an emulator or simulator, and the actions that provide one are not on this repository's allowlist.
 
 ## [0.4.0] - 2026-09-23
 
 ### Changed
-- **The app is now called Nija.** निज (*nija*) is Sanskrit for "one's own" — the name says what the product is: your clipboard, on your database, under your keys. The About page and the README explain it. Nothing about how syncing, encryption or pairing works has changed.
+- **The app is now called Nija.** निज (*nija*) is Sanskrit for "one's own"; the name says what the product is: your clipboard, on your database, under your keys. The About page and the README explain it. Nothing about how syncing, encryption or pairing works has changed.
 - **Bundle identifiers are now `com.appfide.nija`** on every platform (from `com.appfide.clipboardSync` / `com.appfide.clipboard_sync`). The operating system treats a new identifier as a different app, so **0.3.0 will not upgrade in place**: install Nija, pair it as you would a new device, and remove the old app afterwards. Local history kept by the old install stays in its own sandbox and is not carried over; anything already in your database syncs back down on first run.
-- **Pairing codes now start with `NIJA1.`** instead of `CSYNC1.`, and derive from a matching label. A device still running 0.3.0 cannot pair with one running this build — upgrade both.
+- **Pairing codes now start with `NIJA1.`** instead of `CSYNC1.`, and derive from a matching label. A device still running 0.3.0 cannot pair with one running this build: upgrade both.
 - The repository, the Flutter app and the core package are now `appfide/nija`, `apps/nija` and `packages/nija_core`. Live-backend tests read `NIJA_TEST_<BACKEND>_*` environment variables instead of `CLIPSYNC_TEST_*`.
 - Noto Sans Devanagari (SIL OFL 1.1) ships with the app so the name renders in its own script on every platform, not only where the OS happens to have a Devanagari face.
 
 ### Added
-- **Every release is now verified before it is published.** `scripts/verify_artifacts.sh` opens each installer and checks it is the app it claims to be — bundle identifier `com.appfide.nija`, the version being released, a plausible binary size, and the signing state the release promises (Developer ID plus a notarization staple on macOS, a verified upload-key signature on Android). A build carrying the wrong identifier or last version's number now fails the release rather than reaching users.
+- **Every release is now verified before it is published.** `scripts/verify_artifacts.sh` opens each installer and checks it is the app it claims to be: bundle identifier `com.appfide.nija`, the version being released, a plausible binary size, and the signing state the release promises (Developer ID plus a notarization staple on macOS, a verified upload-key signature on Android). A build carrying the wrong identifier or last version's number now fails the release rather than reaching users.
 - **Build provenance.** Every published file carries a GitHub-signed attestation naming the workflow, commit and runner that produced it: `gh attestation verify <file> --repo appfide/nija`. A checksum only proves a file is intact; provenance proves where it came from, which matters because whoever can replace the file can replace the checksum beside it.
 - **An SPDX software bill of materials** ships with each release and is covered by `SHA256SUMS.txt`.
 - Release notes now lead with the CHANGELOG section for that version instead of only a list of commit subjects.

@@ -63,6 +63,8 @@ Admin UI → Settings → Import collections → paste:
       { "name": "membership_sig", "type": "text" },
       { "name": "key_version", "type": "number" },
       { "name": "key_envelope", "type": "text", "max": 4096 },
+      { "name": "permissions", "type": "text" },
+      { "name": "admin_envelope", "type": "text", "max": 4096 },
       { "name": "owner",     "type": "relation", "collectionId": "_pb_users_auth_", "maxSelect": 1 }
     ],
     "indexes": [ "CREATE UNIQUE INDEX idx_devices_device_id ON devices (device_id)" ],
@@ -89,6 +91,12 @@ Add the fields marked above to the existing collections (Collections → edit
 `expires_at` (date) on `devices`.
 PocketBase silently drops unknown fields, so the app checks for them and
 refuses to sync until they exist.
+
+### Upgrading to 0.5
+
+Add `permissions` and `admin_envelope` (text) to `devices`. They are needed
+only to grant permissions or make a member an admin; without them the app
+refuses the grant and leaves the device as it was.
 
 ## 2. Create a user
 
