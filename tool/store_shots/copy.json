@@ -13,6 +13,8 @@
     "s6_title": "Encrypted end to end",
     "s6_sub": "Your database only ever sees ciphertext",
     "header_title": "Your clipboard, your database",
-    "header_sub": "Open source · Encrypted · No account"
+    "header_sub": "Open source · Encrypted · No account",
+    "search_title": "Open-source clipboard sync",
+    "search_sub": "On a database you own, end-to-end encrypted"
   }
 }
