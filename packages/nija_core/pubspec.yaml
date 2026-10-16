@@ -15,7 +15,7 @@ dependencies:
   dio: ^5.11.1
   meta: ^1.16.0
   mongo_dart: ^0.10.9
-  pocketbase: ^0.25.1
+  pocketbase: ^0.25.2
   supabase: ^2.16.1
   uuid: ^4.6.0
 
