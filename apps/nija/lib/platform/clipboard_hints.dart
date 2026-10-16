@@ -37,6 +37,24 @@ abstract final class ClipboardHints {
     return false;
   }
 
+  /// Whether the current clipboard content came from another Apple device
+  /// through Universal Clipboard (macOS and iOS mark it with the
+  /// `com.apple.is-remote-clipboard` type). Never throws.
+  static Future<bool> isRemote() async {
+    try {
+      if (Platform.isMacOS || Platform.isIOS) {
+        return await _channel.invokeMethod<bool>('isRemote') ?? false;
+      }
+    } on MissingPluginException {
+      // Native side not compiled in (tests, unsupported build).
+    } on PlatformException catch (e) {
+      log.d('universal clipboard check failed: ${e.message}');
+    } catch (e) {
+      log.d('universal clipboard check failed: $e');
+    }
+    return false;
+  }
+
   static bool _windows() {
     final name = 'ExcludeClipboardContentFromMonitorProcessing'.toNativeUtf16();
     try {

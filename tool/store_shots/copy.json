@@ -1,0 +1,18 @@
+{
+  "en": {
+    "s1_title": "Your clipboard, on every device",
+    "s1_sub": "Copy on one, paste on all of them",
+    "s2_title": "Find anything you copied",
+    "s2_sub": "Search, filters and pins",
+    "s3_title": "You decide who is in",
+    "s3_sub": "Roles, time limits, pause or remove",
+    "s4_title": "Bring your own database",
+    "s4_sub": "Supabase, PocketBase, CouchDB, Firestore or MongoDB",
+    "s5_title": "Add a device in seconds",
+    "s5_sub": "Scan the code, type the PIN",
+    "s6_title": "Encrypted end to end",
+    "s6_sub": "Your database only ever sees ciphertext",
+    "header_title": "Your clipboard, your database",
+    "header_sub": "Open source · Encrypted · No account"
+  }
+}

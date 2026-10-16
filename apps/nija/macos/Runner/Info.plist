@@ -36,5 +36,10 @@
 	<string>Nija connects to a self-hosted database on your local network when you configure one.</string>
 	<key>LSUIElement</key>
 	<false/>
+	<!-- Skia instead of Impeller: with Flutter 3.47 Impeller drops or garbles
+	     single glyphs on macOS (labels such as "No expiry" render with a
+	     broken first letter). Revisit when a Flutter upgrade fixes it. -->
+	<key>FLTEnableImpeller</key>
+	<false/>
 </dict>
 </plist>

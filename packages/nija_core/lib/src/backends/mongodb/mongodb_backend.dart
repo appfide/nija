@@ -208,7 +208,8 @@ class MongoDbBackend implements SyncBackend {
         ..remove('id')
         ..['last_seen'] = device.lastSeen.toUtc();
       final membership = <String, Object?>{
-        for (final k in Device.membershipKeys) k: device.toMap()[k],
+        for (final k in {...Device.membershipKeys, ...Device.grantKeys})
+          k: device.toMap()[k],
       }..['expires_at'] = device.expiresAt?.toUtc();
       await db.collection(_devicesCollection).updateOne(
         where.eq('_id', device.id),

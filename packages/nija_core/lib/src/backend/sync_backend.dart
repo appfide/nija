@@ -34,10 +34,19 @@ class ConnectionCheck {
 @immutable
 class SchemaCheck {
   /// Creates a schema check result.
-  const SchemaCheck({required this.ok, this.missing = const [], this.hint});
+  const SchemaCheck({
+    required this.ok,
+    this.missing = const [],
+    this.hint,
+    this.setupScript,
+  });
 
   /// Everything the adapter needs exists.
-  const SchemaCheck.ready() : ok = true, missing = const [], hint = null;
+  const SchemaCheck.ready()
+    : ok = true,
+      missing = const [],
+      hint = null,
+      setupScript = null;
 
   /// Whether the schema is complete.
   final bool ok;
@@ -47,6 +56,10 @@ class SchemaCheck {
 
   /// What to do about it (usually "run the SQL in docs/backends/x.md").
   final String? hint;
+
+  /// Script that creates or upgrades the schema for the current settings,
+  /// safe to run more than once, when the adapter can generate one.
+  final String? setupScript;
 }
 
 /// Error raised by a backend adapter. `message` is already redacted.

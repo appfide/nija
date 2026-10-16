@@ -38,6 +38,7 @@ class Node {
   final Map<int, String> passphrases = {};
   final List<String> log = [];
   final List<PendingTrust> trustPrompts = [];
+  final List<String> adminKeys = [];
 
   Device get device => Device(
     id: id,
@@ -72,6 +73,7 @@ class Node {
         this.passphrases[v] = p;
         ring.add(v, await ClipCipher.fromPassphrase(p, keyScope: 'test'));
       },
+      onAdminKeyReceived: (k) async => adminKeys.add(k),
       pollInterval: const Duration(hours: 1),
       heartbeatInterval: const Duration(hours: 1),
       assumeRegistered: assumeRegistered,
@@ -109,6 +111,18 @@ class Node {
   Iterable<String> get received => store.items.values
       .where((i) => i.deviceId != id && !i.isDeleted)
       .map((i) => i.content);
+}
+
+/// A database whose device rows have no columns for the 0.5 grant fields.
+class _LossyBackend extends MemoryBackend {
+  _LossyBackend(MemoryStore shared) : super(shared: shared);
+
+  @override
+  Future<void> updateDevice(Device device) => super.updateDevice(
+    Device.fromMap(
+      device.toMap()..removeWhere((k, _) => Device.grantKeys.contains(k)),
+    ),
+  );
 }
 
 /// Direct database access, as an attacker would have with stolen creds.
@@ -182,6 +196,107 @@ void main() {
     tearDown(() async {
       await admin.stop();
       await member.stop();
+    });
+
+    test('after a database reset the admin signs its own row again', () async {
+      await admin.stop();
+      shared.devices.clear();
+      shared.items.clear();
+      admin = await Node.create(shared, 'A', 'Admin laptop', keys: admin.keys);
+      await admin.start(
+        adminKey: adminKey,
+        trustedAdminPub: adminKey.publicKey,
+        passphrases: {1: pass1},
+        assumeRegistered: true,
+      );
+      expect(admin.engine!.status.phase, isNot(SyncPhase.revoked));
+      final row = atk.row('A');
+      expect(row.admin, isTrue);
+      expect(
+        await ClipSigning.verifyMembership(row, adminKey.publicKey),
+        isTrue,
+      );
+      expect(admin.engine!.status.selfVerified, isTrue);
+    });
+
+    test('the admin grants and takes back a permission', () async {
+      const perm = DevicePermission.clearHistory;
+      await admin.engine!.setDevicePermissions('B', {perm});
+      await member.engine!.refreshDevices();
+      expect(member.engine!.permissions, {perm});
+      expect(member.engine!.status.selfVerified, isTrue);
+      expect(atk.row('B').may(perm), isTrue);
+
+      await admin.engine!.setDevicePermissions('B', {});
+      await member.engine!.refreshDevices();
+      expect(member.engine!.permissions, isEmpty);
+      expect(member.engine!.status.selfVerified, isTrue);
+    });
+
+    test('a member cannot grant itself a permission', () async {
+      atk.setRow(
+        atk.row('B').copyWith(permissions: {DevicePermission.clearHistory}),
+      );
+      await member.engine!.refreshDevices();
+      expect(member.engine!.permissions, isEmpty);
+      expect(member.engine!.status.selfVerified, isFalse);
+      expect(
+        () => member.engine!.setDevicePermissions('B', {
+          DevicePermission.clearHistory,
+        }),
+        throwsStateError,
+      );
+    });
+
+    test('making a member admin delivers the key sealed to it', () async {
+      await admin.engine!.makeAdmin('B');
+      final env = atk.row('B').adminEnvelope!;
+      expect(env, isNot(contains(await adminKey.encode())));
+      await member.engine!.refreshDevices();
+      expect(member.adminKeys, [await adminKey.encode()]);
+    });
+
+    test('an admin envelope holding another key is ignored', () async {
+      final mallory = await AdminKey.generate();
+      final env = await KeyEnvelope.seal(
+        passphrase: await mallory.encode(),
+        version: 0,
+        recipientBoxPub: member.keys.boxPub,
+      );
+      // Signed by the real admin, so only the key check can stop it.
+      atk.setRow(
+        await ClipSigning.signMembership(
+          atk.row('B').copyWith(admin: true, adminEnvelope: env.encode()),
+          adminKey,
+        ),
+      );
+      await member.engine!.refreshDevices();
+      expect(member.adminKeys, isEmpty);
+    });
+
+    test('a schema that drops the grant fields rolls the grant back', () async {
+      final lossy = _LossyBackend(shared);
+      await lossy.connect(const BackendConfig.empty('memory'));
+      final e = SyncEngine(
+        backend: lossy,
+        store: FakeLocalStore(),
+        device: admin.device,
+        identity: admin.keys,
+        adminKey: adminKey,
+        trustedAdminPub: adminKey.publicKey,
+        pollInterval: const Duration(hours: 1),
+        heartbeatInterval: const Duration(hours: 1),
+      );
+      await e.start();
+      await expectLater(
+        e.setDevicePermissions('B', {DevicePermission.clearHistory}),
+        throwsA(isA<BackendException>()),
+      );
+      await member.engine!.refreshDevices();
+      expect(member.engine!.status.selfVerified, isTrue);
+      expect(member.engine!.permissions, isEmpty);
+      await e.dispose();
+      await lossy.dispose();
     });
 
     test(
@@ -635,6 +750,23 @@ void main() {
       );
     });
 
+    test('a grant from a newer app version still verifies', () async {
+      final admin = await AdminKey.generate();
+      final signed = await ClipSigning.signMembership(
+        Device.fromMap(const {
+          'id': 'd',
+          'permissions': 'clear_history,something_newer',
+        }),
+        admin,
+      );
+      final reread = Device.fromMap(signed.toMap());
+      expect(reread.permissions, {DevicePermission.clearHistory});
+      expect(
+        await ClipSigning.verifyMembership(reread, admin.publicKey),
+        isTrue,
+      );
+    });
+
     test('membership signature covers every access-relevant field', () async {
       final admin = await AdminKey.generate();
       final base = Device(
@@ -674,6 +806,8 @@ void main() {
         signed.copyWith(membershipVersion: 2),
         signed.copyWith(keyVersion: 5),
         signed.copyWith(keyEnvelope: '{}'),
+        signed.copyWith(permissions: {DevicePermission.clearHistory}),
+        signed.copyWith(adminEnvelope: '{}'),
       ]) {
         expect(
           await ClipSigning.verifyMembership(mutated, admin.publicKey),

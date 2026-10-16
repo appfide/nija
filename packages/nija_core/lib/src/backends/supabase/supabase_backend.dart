@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart';
+
 import 'package:nija_core/src/backend/backend_config.dart';
 import 'package:nija_core/src/backend/backend_descriptor.dart';
 import 'package:nija_core/src/backend/config_field.dart';
@@ -130,6 +132,17 @@ class SupabaseBackend implements SyncBackend {
         'Connected to Supabase',
         latency: sw.elapsed,
       );
+    } on PostgrestException catch (e) {
+      // The server answered and accepted the key; only the tables are
+      // missing. That is a schema problem, which verifySchema reports with
+      // the SQL to run.
+      if (_isMissingTable(e)) {
+        return ConnectionCheck.success(
+          'Connected to Supabase; tables not set up yet',
+          latency: sw.elapsed,
+        );
+      }
+      return ConnectionCheck.failure(_wrap(e).message);
     } catch (e) {
       return ConnectionCheck.failure(_wrap(e).message);
     }
@@ -165,8 +178,7 @@ class SupabaseBackend implements SyncBackend {
         await _ensureAuth();
         await _c.from(t).select('id').limit(1);
       } on PostgrestException catch (e) {
-        // 42P01 = undefined_table; PGRST205 = table not in schema cache.
-        if (e.code == '42P01' || e.code == 'PGRST205' || e.code == '404') {
+        if (_isMissingTable(e)) {
           missing.add('table $t');
           continue;
         }
@@ -190,9 +202,14 @@ class SupabaseBackend implements SyncBackend {
         : SchemaCheck(
             ok: false,
             missing: missing,
-            hint: missing.any((m) => m.startsWith('column'))
-                ? 'Run the upgrade SQL in ${descriptorStatic.docsPath}'
-                : 'Run the SQL in ${descriptorStatic.docsPath}',
+            hint:
+                'Copy the setup SQL, run it in the Supabase SQL editor '
+                '(Dashboard → SQL → New query), then test again.',
+            setupScript: setupSql(
+              items: _table,
+              devices: _devicesTable,
+              signedIn: _email != null && _password != null,
+            ),
           );
   }
 
@@ -354,8 +371,188 @@ class SupabaseBackend implements SyncBackend {
     _client = null;
   }
 
+  static const _itemColumnTypes = <(String, String)>[
+    ('owner_id', 'uuid default auth.uid()'),
+    ('device_id', "text not null default ''"),
+    ('device_name', "text not null default ''"),
+    ('content_type', "text not null default 'text'"),
+    ('content', "text not null default ''"),
+    ('blob_ref', 'text'),
+    ('content_hash', "text not null default ''"),
+    ('size_bytes', 'integer not null default 0'),
+    ('encrypted', 'boolean not null default false'),
+    ('nonce', 'text'),
+    ('created_at', 'timestamptz not null default now()'),
+    ('updated_at', 'timestamptz not null default now()'),
+    ('deleted_at', 'timestamptz'),
+    ('target_device_id', 'text'),
+    ('key_version', 'integer not null default 0'),
+    ('sig', 'text'),
+  ];
+
+  static const _deviceColumnTypes = <(String, String)>[
+    ('owner_id', 'uuid default auth.uid()'),
+    ('name', "text not null default ''"),
+    ('platform', "text not null default ''"),
+    ('last_seen', 'timestamptz not null default now()'),
+    ('app_version', 'text'),
+    ('status', "text not null default 'active'"),
+    ('role', "text not null default 'full'"),
+    ('expires_at', 'timestamptz'),
+    ('paired_by', 'text'),
+    ('sign_pub', 'text'),
+    ('box_pub', 'text'),
+    ('admin', 'boolean not null default false'),
+    ('admin_pub', 'text'),
+    ('membership_version', 'integer not null default 0'),
+    ('membership_sig', 'text'),
+    ('key_version', 'integer not null default 0'),
+    ('key_envelope', 'text'),
+    ('permissions', 'text'),
+    ('admin_envelope', 'text'),
+  ];
+
+  static String _ident(String name) => '"${name.replaceAll('"', '""')}"';
+
+  /// SQL that creates the tables (or adds missing columns to existing
+  /// ones), turns on row level security with a policy for [signedIn] or
+  /// anon-key access, and adds [items] to the realtime publication. Every
+  /// statement is idempotent, so it is safe to run again.
+  static String setupSql({
+    required String items,
+    required String devices,
+    required bool signedIn,
+  }) {
+    final out = StringBuffer(
+      '-- Nija setup for Supabase. Safe to run more than once.\n',
+    );
+    for (final (table, key, keyType, cols) in [
+      (items, 'id', 'uuid', _itemColumnTypes),
+      (devices, 'id', 'text', _deviceColumnTypes),
+    ]) {
+      final t = 'public.${_ident(table)}';
+      out
+        ..writeln()
+        ..writeln('create table if not exists $t ($key $keyType primary key);')
+        ..writeln('alter table $t');
+      for (final (i, (name, type)) in cols.indexed) {
+        final end = i == cols.length - 1 ? ';' : ',';
+        out.writeln('  add column if not exists $name $type$end');
+      }
+      final policy = _ident('nija ${signedIn ? 'owner' : 'anon'} access');
+      out
+        ..writeln('alter table $t enable row level security;')
+        ..writeln('drop policy if exists $policy on $t;')
+        ..writeln(
+          signedIn
+              ? 'create policy $policy on $t for all to authenticated '
+                    'using (owner_id = auth.uid()) '
+                    'with check (owner_id = auth.uid());'
+              : 'create policy $policy on $t for all to anon '
+                    'using (true) with check (true);',
+        );
+    }
+    final t = 'public.${_ident(items)}';
+    final lit = "'${items.replaceAll("'", "''")}'";
+    out
+      ..writeln()
+      ..writeln(
+        'create index if not exists '
+        '${_ident('${items}_updated_at_idx')} on $t (updated_at);',
+      )
+      ..writeln(r'do $$')
+      ..writeln('begin')
+      ..writeln('  if not exists (')
+      ..writeln('    select 1 from pg_publication_tables')
+      ..writeln(
+        "    where pubname = 'supabase_realtime' and schemaname = 'public' "
+        'and tablename = $lit',
+      )
+      ..writeln('  ) then')
+      ..writeln('    alter publication supabase_realtime add table $t;')
+      ..writeln('  end if;')
+      ..writeln(r'end $$;')
+      ..writeln("notify pgrst, 'reload schema';");
+    return out.toString();
+  }
+
+  /// Project ref of a hosted project URL (`https://<ref>.supabase.co`), or
+  /// `null` for a custom domain or self-hosted instance.
+  static String? projectRefOf(String url) {
+    final host = Uri.tryParse(url.trim())?.host ?? '';
+    final m = RegExp(r'^([a-z0-9]{20})\.supabase\.(co|in)$').firstMatch(host);
+    return m?.group(1);
+  }
+
+  /// Runs [sql] (normally [setupSql]) on the project through the Supabase
+  /// Management API. [accessToken] is a personal access token with database
+  /// write access; it is sent only to api.supabase.com, for this request,
+  /// and never stored. Throws [BackendException] with a readable message.
+  static Future<void> runSetup({
+    required String projectRef,
+    required String accessToken,
+    required String sql,
+    Dio? dio,
+  }) async {
+    final client =
+        dio ??
+        Dio(
+          BaseOptions(
+            baseUrl: 'https://api.supabase.com',
+            connectTimeout: const Duration(seconds: 15),
+            receiveTimeout: const Duration(seconds: 60),
+          ),
+        );
+    try {
+      await client.post<Object?>(
+        '/v1/projects/$projectRef/database/query',
+        data: {'query': sql},
+        options: Options(
+          headers: {'Authorization': 'Bearer ${accessToken.trim()}'},
+        ),
+      );
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      final body = e.response?.data;
+      final detail = body is Map ? (body['message'] ?? body['error']) : body;
+      throw BackendException(
+        redactSecrets(switch (status) {
+          401 => 'Supabase rejected the access token.',
+          403 =>
+            'This access token may not change the database of project '
+                '$projectRef. Create one with database write access.',
+          404 => 'No Supabase project $projectRef for this access token.',
+          429 => 'Supabase is rate limiting requests; try again in a minute.',
+          _ =>
+            'Supabase could not run the setup'
+                '${status == null ? '' : ' (HTTP $status)'}'
+                '${detail == null ? '' : ': $detail'}',
+        }),
+        cause: e,
+        isAuth: status == 401 || status == 403,
+        isTransient: status == null || status == 429 || status >= 500,
+      );
+    } finally {
+      if (dio == null) client.close();
+    }
+  }
+
+  /// 42P01 = undefined_table; PGRST205 = table not in PostgREST's schema
+  /// cache (dropped, or never created).
+  static bool _isMissingTable(PostgrestException e) =>
+      e.code == '42P01' || e.code == 'PGRST205' || e.code == '404';
+
   BackendException _wrap(Object e) {
     if (e is BackendException) return e;
+    if (e is PostgrestException && _isMissingTable(e)) {
+      return BackendException(
+        redactSecrets(
+          'Supabase: the Nija tables are missing (${e.message}). Open '
+          'Settings → Database and test the connection to set them up.',
+        ),
+        cause: e,
+      );
+    }
     if (e is PostgrestException) {
       final code = e.code ?? '';
       final auth =

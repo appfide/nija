@@ -194,6 +194,19 @@ class DriftLocalStore implements LocalStore {
         ),
       );
 
+  /// Tombstones an item on this device only. It is marked synced so the
+  /// tombstone never reaches the backend: used for clips another device
+  /// owns, which only that device may delete from the group.
+  Future<void> hide(String id, DateTime now) =>
+      (db.update(db.clipItems)..where((t) => t.id.equals(id))).write(
+        ClipItemsCompanion(
+          deletedAt: Value(now.toUtc()),
+          updatedAt: Value(now.toUtc()),
+          content: const Value(''),
+          synced: const Value(true),
+        ),
+      );
+
   /// Tombstones every live item (Clear history).
   Future<void> deleteAll(DateTime now) =>
       (db.update(db.clipItems)..where((t) => t.deletedAt.isNull())).write(
@@ -214,6 +227,18 @@ class DriftLocalStore implements LocalStore {
                 t.synced.equals(true),
           ))
           .go();
+
+  /// Physically removes every clip on this device, pinned and unsynced ones
+  /// included. Keeps the sync cursor, so clips already in the database are
+  /// not pulled back. Returns the number removed.
+  Future<int> clearHistory() => db.delete(db.clipItems).go();
+
+  /// Marks queued deletions as sent without sending them (the rows they
+  /// would delete are about to be removed from the database anyway).
+  Future<void> dropPendingTombstones() =>
+      (db.update(db.clipItems)
+            ..where((t) => t.deletedAt.isNotNull() & t.synced.equals(false)))
+          .write(const ClipItemsCompanion(synced: Value(true)));
 
   /// Deletes everything (used when switching backend with "start fresh").
   Future<void> wipe() async {

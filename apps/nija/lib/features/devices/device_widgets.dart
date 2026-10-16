@@ -83,6 +83,7 @@ class DeviceTile extends StatelessWidget {
     required this.isSelf,
     this.verified,
     this.onAction,
+    this.canGrant = false,
     super.key,
   });
 
@@ -95,6 +96,10 @@ class DeviceTile extends StatelessWidget {
   /// In a signed group: whether the admin signature verifies. `null` in a
   /// legacy group (no chip shown).
   final bool? verified;
+
+  /// Whether the menu offers permissions and *Make admin* (this device is
+  /// the admin of a signed group).
+  final bool canGrant;
 
   /// Menu handler; `null` hides the menu.
   final void Function(String action)? onAction;
@@ -109,7 +114,7 @@ class DeviceTile extends StatelessWidget {
     final online = !d.isPending && d.isOnline(now);
     final tint = switch (d.status) {
       DeviceStatus.blocked => scheme.error,
-      DeviceStatus.removed => c.muted,
+      DeviceStatus.paused || DeviceStatus.removed => c.muted,
       DeviceStatus.active =>
         d.isExpired(now) ? c.warning : (online ? c.success : scheme.primary),
     };
@@ -139,8 +144,12 @@ class DeviceTile extends StatelessWidget {
         ),
       if (d.status == DeviceStatus.blocked)
         Chip2('Blocked', color: scheme.error, icon: Icons.block_rounded),
+      if (d.status == DeviceStatus.paused)
+        Chip2('Paused', color: c.warning, icon: Icons.pause_circle_rounded),
       if (d.status == DeviceStatus.removed)
         Chip2('Removed', color: c.muted, icon: Icons.person_remove_rounded),
+      for (final p in d.permissions)
+        if (!d.admin) Chip2(p.label, color: c.muted, icon: Icons.key_rounded),
       if (d.role != DeviceRole.full)
         Chip2(
           d.role.label,
@@ -197,11 +206,31 @@ class DeviceTile extends StatelessWidget {
                       'Unblock',
                     ),
                   )
-                else if (d.status == DeviceStatus.active)
+                else if (d.status == DeviceStatus.paused) ...[
+                  const PopupMenuItem(
+                    value: 'resume',
+                    child: _MenuRow(
+                      Icons.play_circle_outline_rounded,
+                      'Resume',
+                    ),
+                  ),
                   const PopupMenuItem(
                     value: 'block',
                     child: _MenuRow(Icons.block_rounded, 'Block'),
                   ),
+                ] else if (d.status == DeviceStatus.active) ...[
+                  const PopupMenuItem(
+                    value: 'pause',
+                    child: _MenuRow(
+                      Icons.pause_circle_outline_rounded,
+                      'Pause sync',
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'block',
+                    child: _MenuRow(Icons.block_rounded, 'Block'),
+                  ),
+                ],
                 if (d.status != DeviceStatus.removed) ...[
                   const PopupMenuItem(
                     value: 'role',
@@ -211,6 +240,20 @@ class DeviceTile extends StatelessWidget {
                     value: 'expiry',
                     child: _MenuRow(Icons.schedule_rounded, 'Access duration…'),
                   ),
+                  if (canGrant && !d.admin && !d.isPending) ...[
+                    const PopupMenuItem(
+                      value: 'permissions',
+                      child: _MenuRow(Icons.key_rounded, 'Permissions…'),
+                    ),
+                    if (d.hasKeys)
+                      const PopupMenuItem(
+                        value: 'admin',
+                        child: _MenuRow(
+                          Icons.admin_panel_settings_rounded,
+                          'Make admin…',
+                        ),
+                      ),
+                  ],
                   const PopupMenuDivider(),
                   PopupMenuItem(
                     value: 'remove',
@@ -365,6 +408,56 @@ Future<(Duration?,)?> pickAccessDuration(BuildContext context) =>
     );
 
 /// Yes / no confirmation.
+/// Lets the admin choose which [DevicePermission]s a member holds. Returns
+/// the new set, or `null` when cancelled.
+Future<Set<DevicePermission>?> pickPermissions(
+  BuildContext context,
+  Device device,
+) => showDialog<Set<DevicePermission>>(
+  context: context,
+  builder: (ctx) {
+    final chosen = {...device.permissions};
+    return StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: Text('Permissions for ${device.name}'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final p in DevicePermission.values)
+                CheckboxListTile(
+                  key: ValueKey('permission-${p.wire}'),
+                  value: chosen.contains(p),
+                  title: Text(p.label),
+                  subtitle: Text(switch (p) {
+                    DevicePermission.clearHistory =>
+                      'May delete every clip in the database, for all devices. '
+                          'Devices and keys are not affected.',
+                  }),
+                  onChanged: (v) => setState(
+                    () => (v ?? false) ? chosen.add(p) : chosen.remove(p),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('permissions-save'),
+            onPressed: () => Navigator.pop(ctx, chosen),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  },
+);
+
 Future<bool> confirm(
   BuildContext context, {
   required String title,

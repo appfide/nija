@@ -9,6 +9,10 @@ abstract final class PlatformInfo {
   /// Android or iOS: foreground capture only.
   static bool get isMobile => Platform.isAndroid || Platform.isIOS;
 
+  /// macOS or iOS: Universal Clipboard can bring in copies from other
+  /// Apple devices.
+  static bool get isApple => Platform.isMacOS || Platform.isIOS;
+
   /// Wire value stored in `devices.platform`.
   static String get name => Platform.operatingSystem;
 

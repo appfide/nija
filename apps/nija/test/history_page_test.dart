@@ -29,8 +29,8 @@ class _RecordingSync extends SyncController {
   Future<void> copyTextUnrecorded(String text) async => copiedText.add(text);
 
   @override
-  Future<void> delete(String id) =>
-      ref.read(localStoreProvider).delete(id, DateTime.now().toUtc());
+  Future<void> delete(ClipItem item) =>
+      ref.read(localStoreProvider).delete(item.id, DateTime.now().toUtc());
 }
 
 ClipItem _clip(

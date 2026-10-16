@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:nija/ui/app_theme.dart';
 import 'package:nija_core/nija_core.dart';
@@ -38,6 +36,7 @@ class StatusPill extends StatelessWidget {
             ? (c.warning, compact ? 'Pending' : '$pending pending')
             : (c.success, status.realtime ? 'Live' : 'Synced'),
       SyncPhase.syncing => (scheme.primary, 'Syncing'),
+      SyncPhase.paused => (c.muted, compact ? 'Paused' : 'Sync paused'),
       SyncPhase.error => (
         scheme.error,
         status.authFailed
@@ -104,7 +103,7 @@ class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
-    if (widget.pulse) unawaited(_c.repeat(reverse: true));
+    if (widget.pulse) _c.repeat(reverse: true);
   }
 
   @override
@@ -112,7 +111,7 @@ class _DotState extends State<_Dot> with SingleTickerProviderStateMixin {
     super.didUpdateWidget(old);
     final reduce = MediaQuery.maybeDisableAnimationsOf(context) ?? false;
     if (widget.pulse && !reduce) {
-      unawaited(_c.repeat(reverse: true));
+      _c.repeat(reverse: true);
     } else {
       _c
         ..stop()

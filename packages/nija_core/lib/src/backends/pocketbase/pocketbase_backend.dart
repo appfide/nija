@@ -348,6 +348,12 @@ class PocketBaseBackend implements SyncBackend {
           : await col.update(existing.id, body: body);
       _assertField(rec, 'status', _devicesCollection);
       _assertField(rec, 'membership_sig', _devicesCollection);
+      if (device.permissionNames.isNotEmpty) {
+        _assertField(rec, 'permissions', _devicesCollection);
+      }
+      if (device.adminEnvelope != null) {
+        _assertField(rec, 'admin_envelope', _devicesCollection);
+      }
     } catch (e) {
       throw _wrap(e);
     }
@@ -393,6 +399,8 @@ class PocketBaseBackend implements SyncBackend {
                 'key_envelope',
               ])
                 k: _nullIfEmpty(r.get<Object?>(k)),
+              for (final k in Device.grantKeys)
+                if (r.data.containsKey(k)) k: r.get<Object?>(k),
               'admin': r.get<Object?>('admin') == true,
               'membership_version': r.get<Object?>('membership_version'),
               'key_version': r.get<Object?>('key_version'),

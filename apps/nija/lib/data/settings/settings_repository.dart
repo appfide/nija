@@ -26,6 +26,7 @@ class SettingsRepository {
   static String _kAdminKey(String scope) => 'admin_key.$scope';
   static String _kAdminPub(String scope) => 'admin_pub.$scope';
   static String _kSeenVersions(String scope) => 'seen_versions.$scope';
+  static String _kPaused(String scope) => 'admin_paused.$scope';
   static String _kSecret(String backendId, String key) =>
       'backend.$backendId.$key';
   static String _kPlain(String backendId, String key) =>
@@ -66,8 +67,11 @@ class SettingsRepository {
       hotkeyEnabled: _prefs.getBool('hotkey_enabled') ?? true,
       themeMode: _prefs.getString('theme_mode') ?? 'system',
       capturePaused: _prefs.getBool('capture_paused') ?? false,
+      remoteSyncEnabled: _prefs.getBool('remote_sync_enabled') ?? true,
       skipSensitive: _prefs.getBool('skip_sensitive') ?? true,
       skipSecretLike: _prefs.getBool('skip_secret_like') ?? false,
+      skipUniversalClipboard:
+          _prefs.getBool('skip_universal_clipboard') ?? true,
       hideAfterCopy: _prefs.getBool('hide_after_copy') ?? false,
       trayRecents: _prefs.getBool('tray_recents') ?? true,
     );
@@ -81,12 +85,19 @@ class SettingsRepository {
   }) async {
     final d = _registry.descriptor(backendId);
     if (d == null) return const {};
+    final fields = [
+      for (final f in d.configSchema)
+        if (!f.isSensitive || includeSecrets) f,
+    ];
+    // Secrets are read together: while a keychain prompt is pending each
+    // read waits for SecretStore.timeout, and in sequence those add up.
+    Future<String?> valueOf(ConfigField f) async => f.isSensitive
+        ? _secure.read(_kSecret(backendId, f.key))
+        : _prefs.getString(_kPlain(backendId, f.key));
+    final values = await Future.wait(fields.map(valueOf));
     final out = <String, String>{};
-    for (final f in d.configSchema) {
-      if (f.isSensitive && !includeSecrets) continue;
-      final v = f.isSensitive
-          ? await _secure.read(_kSecret(backendId, f.key))
-          : _prefs.getString(_kPlain(backendId, f.key));
+    for (final (i, f) in fields.indexed) {
+      final v = values[i];
       if (v != null && v.isNotEmpty) {
         out[f.key] = v;
       } else if (f.defaultValue != null) {
@@ -113,8 +124,10 @@ class SettingsRepository {
     await _prefs.setBool('hotkey_enabled', s.hotkeyEnabled);
     await _prefs.setString('theme_mode', s.themeMode);
     await _prefs.setBool('capture_paused', s.capturePaused);
+    await _prefs.setBool('remote_sync_enabled', s.remoteSyncEnabled);
     await _prefs.setBool('skip_sensitive', s.skipSensitive);
     await _prefs.setBool('skip_secret_like', s.skipSecretLike);
+    await _prefs.setBool('skip_universal_clipboard', s.skipUniversalClipboard);
     await _prefs.setBool('hide_after_copy', s.hideAfterCopy);
     await _prefs.setBool('tray_recents', s.trayRecents);
     await saveBackendValues(s.backendId, s.backendValues);
@@ -200,7 +213,10 @@ class SettingsRepository {
 
   /// This device's signing / box keys (`DeviceKeys.encode`), or `null` on
   /// first run.
-  Future<String?> loadDeviceKeys() => _secure.read(_kDeviceKeys);
+  /// Throws [SecretStoreTimeout] when the keychain did not answer: a `null`
+  /// here makes the app mint a new identity, which must only happen when
+  /// there really is none.
+  Future<String?> loadDeviceKeys() => _secure.read(_kDeviceKeys, strict: true);
 
   /// Stores the device keys.
   Future<void> saveDeviceKeys(String encoded) =>
@@ -236,10 +252,18 @@ class SettingsRepository {
   Future<void> saveSeenVersions(String scope, Map<String, int> seen) =>
       _prefs.setString(_kSeenVersions(scope), jsonEncode(seen));
 
+  /// Whether the admin of [scope] last left this device paused.
+  bool loadPaused(String scope) => _prefs.getBool(_kPaused(scope)) ?? false;
+
+  /// Persists the admin pause flag for [scope].
+  Future<void> savePaused(String scope, {required bool paused}) =>
+      _prefs.setBool(_kPaused(scope), paused);
+
   /// Forgets everything tied to [scope]: admin key, pinned admin, versions.
   Future<void> clearGroupTrust(String scope) async {
     await saveAdminKey(scope, null);
     await saveTrustedAdminPub(scope, null);
     await _prefs.remove(_kSeenVersions(scope));
+    await _prefs.remove(_kPaused(scope));
   }
 }

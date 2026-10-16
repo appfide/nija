@@ -65,6 +65,11 @@ abstract final class ClipSigning {
       'membership_version': d.membershipVersion,
       'key_version': d.keyVersion,
       'key_envelope': d.keyEnvelope,
+      // Added in 0.5. Present only when set, so rows signed before then
+      // still verify.
+      if (d.permissionNames.isNotEmpty)
+        'permissions': DevicePermission.encode(d.permissionNames),
+      if (d.adminEnvelope != null) 'admin_envelope': d.adminEnvelope,
     }),
   );
 

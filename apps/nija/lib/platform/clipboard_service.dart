@@ -75,6 +75,7 @@ class ClipboardService with ClipboardListener, WidgetsBindingObserver {
     this._paused = false,
     this.skipSensitive = true,
     this.skipSecretLike = false,
+    this.skipUniversalClipboard = false,
   });
 
   /// This device (changes when a pairing code is adopted).
@@ -94,6 +95,12 @@ class ClipboardService with ClipboardListener, WidgetsBindingObserver {
 
   /// Skip text that looks like a credential.
   bool skipSecretLike;
+
+  /// Skip content that arrived from another Apple device through Universal
+  /// Clipboard. Nija on that device syncs it under its own name; recording
+  /// it here too would label it with this device's name, and the synced
+  /// original would then be dropped as an echo.
+  bool skipUniversalClipboard;
 
   bool _paused;
 
@@ -203,6 +210,10 @@ class ClipboardService with ClipboardListener, WidgetsBindingObserver {
     try {
       if (skipSensitive && await ClipboardHints.isSensitive()) {
         log.i('clipboard content flagged sensitive by its source, skipped');
+        return;
+      }
+      if (skipUniversalClipboard && await ClipboardHints.isRemote()) {
+        log.i('clipboard content came through Universal Clipboard, skipped');
         return;
       }
       final snap = await read();

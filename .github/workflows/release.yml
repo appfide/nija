@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLUTTER_VERSION: "3.44.4"
+  FLUTTER_VERSION: "3.47.5"
   APP_DIR: apps/nija
   ARTIFACT_NAME: "Nija-{{build_name}}-{{platform}}.{{ext}}"
 

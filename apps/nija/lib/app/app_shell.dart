@@ -93,45 +93,51 @@ class AppShell extends ConsumerWidget {
             decoration: BoxDecoration(
               border: Border(right: BorderSide(color: context.colors.border)),
             ),
-            child: Column(
-              children: [
-                const SizedBox(height: 20),
-                const BrandMark(),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: NavigationRail(
-                    selectedIndex: index,
-                    onDestinationSelected: (i) =>
-                        context.go(_destinations[i].path),
-                    minWidth: 96,
-                    groupAlignment: -1,
-                    destinations: [
-                      for (final d in _destinations)
-                        NavigationRailDestination(
-                          icon: Icon(d.icon),
-                          selectedIcon: Icon(d.selected),
-                          label: Text(d.label),
-                        ),
-                    ],
+            // The rail fills the window edge to edge, so it must keep clear of
+            // the status bar and home indicator itself (an iPad in the wide
+            // layout put the logo under the clock).
+            child: SafeArea(
+              right: false,
+              child: Column(
+                children: [
+                  const SizedBox(height: 20),
+                  const BrandMark(),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: NavigationRail(
+                      selectedIndex: index,
+                      onDestinationSelected: (i) =>
+                          context.go(_destinations[i].path),
+                      minWidth: 96,
+                      groupAlignment: -1,
+                      destinations: [
+                        for (final d in _destinations)
+                          NavigationRailDestination(
+                            icon: Icon(d.icon),
+                            selectedIcon: Icon(d.selected),
+                            label: Text(d.label),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 20),
-                  child: Tooltip(
-                    message: status.lastError ?? 'Sync status',
-                    child: StatusPill(
-                      status: status,
-                      pending: pending,
-                      compact: true,
-                      onTap: () => context.go(
-                        status.phase.name == 'error'
-                            ? '/settings/backend'
-                            : '/settings',
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 20),
+                    child: Tooltip(
+                      message: status.lastError ?? 'Sync status',
+                      child: StatusPill(
+                        status: status,
+                        pending: pending,
+                        compact: true,
+                        onTap: () => context.go(
+                          status.phase.name == 'error'
+                              ? '/settings/backend'
+                              : '/settings',
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           Expanded(child: child),

@@ -107,6 +107,56 @@ void main() {
     expect(keys, Device.presenceKeys.union(Device.membershipKeys));
   });
 
+  test('grant fields are written only once a row uses them', () {
+    final plain = Device(id: 'x', name: 'n', platform: 'p', lastSeen: now);
+    expect(plain.toMap().keys, isNot(contains('permissions')));
+    expect(plain.toMap().keys, isNot(contains('admin_envelope')));
+
+    final granted = plain.copyWith(
+      permissions: {DevicePermission.clearHistory},
+    );
+    expect(granted.toMap()['permissions'], 'clear_history');
+    expect(granted.may(DevicePermission.clearHistory), isTrue);
+
+    // A row read from an upgraded schema keeps writing them, so taking a
+    // permission back clears the stored value.
+    final stored = Device.fromMap(granted.toMap());
+    expect(stored.storesGrants, isTrue);
+    final revoked = stored.copyWith(permissions: {});
+    expect(revoked.toMap()['permissions'], '');
+    expect(
+      Device.fromMap(revoked.toMap()).toMap().keys,
+      containsAll(Device.grantKeys),
+    );
+  });
+
+  test('unknown permission names are ignored', () {
+    final d = Device.fromMap(const {
+      'id': 'x',
+      'permissions': 'clear_history, launch_rockets',
+    });
+    expect(d.permissions, {DevicePermission.clearHistory});
+    // The unknown name is kept, so the signature over it still verifies
+    // and an older admin editing the row does not drop it.
+    expect(d.toMap()['permissions'], 'clear_history,launch_rockets');
+    expect(
+      d.copyWith(permissions: {}).toMap()['permissions'],
+      'launch_rockets',
+    );
+    expect(DevicePermission.names(null), isEmpty);
+    expect(DevicePermission.names(''), isEmpty);
+    expect(
+      Device(
+        id: 'x',
+        name: 'n',
+        platform: 'p',
+        lastSeen: now,
+        admin: true,
+      ).may(DevicePermission.clearHistory),
+      isTrue,
+    );
+  });
+
   test('online and pending helpers', () {
     final d = Device(id: 'x', name: 'n', platform: 'p', lastSeen: now);
     expect(d.isOnline(now.add(const Duration(minutes: 1))), isTrue);

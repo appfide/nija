@@ -14,6 +14,12 @@ enum DeviceStatus {
   /// syncing. Can be re-activated.
   blocked('blocked'),
 
+  /// Paused by the admin: the device keeps its credentials and keeps
+  /// checking in, but sends and receives nothing. Clips written while it is
+  /// paused never reach it, and what it captures meanwhile stays local.
+  /// Older app versions read this as [active].
+  paused('paused'),
+
   /// Permanently removed. The row stays as a tombstone so the device learns
   /// about its removal; *Forget* deletes the row afterwards.
   removed('removed');
@@ -65,6 +71,41 @@ enum DeviceRole {
       values.firstWhere((r) => r.wire == v, orElse: () => DeviceRole.full);
 }
 
+/// Extra powers the admin can grant a member without making it an admin.
+enum DevicePermission {
+  /// May delete every clip from the database (Settings → Data).
+  clearHistory('clear_history');
+
+  const DevicePermission(this.wire);
+
+  /// Value stored in the database.
+  final String wire;
+
+  /// Human-readable label.
+  String get label => switch (this) {
+    DevicePermission.clearHistory => 'Delete database history',
+  };
+
+  /// Every name in the comma-separated wire form, known or not.
+  static Set<String> names(Object? v) => v is String && v.isNotEmpty
+      ? {
+          for (final n in v.split(','))
+            if (n.trim().isNotEmpty) n.trim(),
+        }
+      : const {};
+
+  /// The permissions this version knows among [names]; the rest are kept
+  /// by [Device] (they are signed) but grant nothing here.
+  static Set<DevicePermission> known(Iterable<String> names) => {
+    for (final p in values)
+      if (names.contains(p.wire)) p,
+  };
+
+  /// Canonical wire form: sorted, comma-separated, empty when none.
+  static String encode(Iterable<String> names) =>
+      (names.toSet().toList()..sort()).join(',');
+}
+
 /// A device participating in a sync group.
 ///
 /// Two kinds of fields live on a device row:
@@ -95,6 +136,9 @@ class Device {
     this.membershipSig,
     this.keyVersion = 0,
     this.keyEnvelope,
+    this.permissionNames = const {},
+    this.adminEnvelope,
+    this.storesGrants = false,
   });
 
   /// Parses the canonical map produced by [toMap]. Missing membership fields
@@ -119,6 +163,10 @@ class Device {
     membershipSig: _nullIfEmpty(map['membership_sig']),
     keyVersion: _toInt(map['key_version']),
     keyEnvelope: _nullIfEmpty(map['key_envelope']),
+    permissionNames: DevicePermission.names(map['permissions']),
+    adminEnvelope: _nullIfEmpty(map['admin_envelope']),
+    storesGrants:
+        map.containsKey('permissions') || map.containsKey('admin_envelope'),
   );
 
   /// Stable UUID generated on first launch (or adopted from a pairing code)
@@ -176,6 +224,27 @@ class Device {
   /// Sealed passphrase for this device (`KeyEnvelope.encode`), or `null`.
   final String? keyEnvelope;
 
+  /// Permission names the admin granted this member, as stored and signed.
+  /// Kept verbatim so a grant from a newer app version still verifies.
+  final Set<String> permissionNames;
+
+  /// The granted permissions this app version knows.
+  Set<DevicePermission> get permissions =>
+      DevicePermission.known(permissionNames);
+
+  /// The group's admin key sealed to this device's [boxPub] when it was made
+  /// an admin after pairing (`KeyEnvelope.encode`), or `null`.
+  final String? adminEnvelope;
+
+  /// Whether the row came from a database that already stores [grantKeys].
+  /// Rows from schemas older than 0.5 do not, and [toMap] leaves those
+  /// fields out until a grant is made so updates keep working there.
+  final bool storesGrants;
+
+  /// Whether [permission] was granted, or this device is an admin.
+  bool may(DevicePermission permission) =>
+      admin || permissions.contains(permission);
+
   /// Whether the row carries an admin signature.
   bool get isSigned => membershipSig != null && adminPub != null;
 
@@ -191,6 +260,10 @@ class Device {
   /// Whether the device may sync at [now]: active and not expired.
   bool canSync(DateTime now) =>
       status == DeviceStatus.active && !isExpired(now);
+
+  /// Whether the device is paused and not expired: out of sync for now, but
+  /// still issued new passphrases so it can read clips once resumed.
+  bool isHeld(DateTime now) => status == DeviceStatus.paused && !isExpired(now);
 
   /// Whether the device heartbeat is recent enough to count as online.
   bool isOnline(DateTime now, {Duration within = const Duration(minutes: 3)}) =>
@@ -228,6 +301,14 @@ class Device {
     'key_envelope',
   };
 
+  /// Keys of the grant fields, added in 0.5. Written with the membership
+  /// fields, but only once a row uses them (see [storesGrants]).
+  static const Set<String> grantKeys = {'permissions', 'admin_envelope'};
+
+  /// Whether [toMap] includes [grantKeys].
+  bool get _writesGrants =>
+      storesGrants || permissionNames.isNotEmpty || adminEnvelope != null;
+
   /// Canonical document shape shared by all backends.
   Map<String, Object?> toMap() => <String, Object?>{
     ...presenceMap(),
@@ -241,6 +322,10 @@ class Device {
     'membership_sig': membershipSig,
     'key_version': keyVersion,
     'key_envelope': keyEnvelope,
+    if (_writesGrants) ...{
+      'permissions': DevicePermission.encode(permissionNames),
+      'admin_envelope': adminEnvelope,
+    },
   };
 
   /// Only the presence fields, what a heartbeat is allowed to write.
@@ -274,6 +359,9 @@ class Device {
     String? membershipSig,
     int? keyVersion,
     String? keyEnvelope,
+    Set<DevicePermission>? permissions,
+    String? adminEnvelope,
+    bool clearAdminEnvelope = false,
     bool clearExpiresAt = false,
     bool clearSignature = false,
     bool clearEnvelope = false,
@@ -297,6 +385,20 @@ class Device {
         : (membershipSig ?? this.membershipSig),
     keyVersion: clearEnvelope ? 0 : (keyVersion ?? this.keyVersion),
     keyEnvelope: clearEnvelope ? null : (keyEnvelope ?? this.keyEnvelope),
+    // Replacing the known permissions keeps names this version does not
+    // know, so an older admin cannot silently drop a newer grant.
+    permissionNames: permissions == null
+        ? permissionNames
+        : {
+            ...permissionNames.where(
+              (n) => DevicePermission.known([n]).isEmpty,
+            ),
+            for (final p in permissions) p.wire,
+          },
+    adminEnvelope: clearAdminEnvelope
+        ? null
+        : (adminEnvelope ?? this.adminEnvelope),
+    storesGrants: storesGrants,
   );
 
   /// Returns a copy with presence fields taken from [presence] and

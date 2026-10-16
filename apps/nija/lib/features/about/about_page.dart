@@ -27,17 +27,19 @@ class AboutPage extends StatelessWidget {
               Text('About', style: theme.textTheme.headlineSmall),
               const SizedBox(height: 16),
               // ---- Other devices ------------------------------------------
-              Card(
-                clipBehavior: Clip.antiAlias,
-                child: SettingRow(
-                  icon: Icons.devices_rounded,
-                  title: 'Get it on your other devices',
-                  subtitle:
-                      'Installers for macOS, Windows, Linux, Android and iOS',
-                  onTap: () => context.push('/about/downloads'),
+              if (!BuildInfo.storeBuild) ...[
+                Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: SettingRow(
+                    icon: Icons.devices_rounded,
+                    title: 'Get it on your other devices',
+                    subtitle:
+                        'Installers for macOS, Windows, Linux, Android and iOS',
+                    onTap: () => context.push('/about/downloads'),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 16),
+              ],
               // ---- App ----------------------------------------------------
               Card(
                 child: Padding(
@@ -342,7 +344,7 @@ class _NameMeaning extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'Sanskrit for "one\'s own" — what is innate to you and belongs to '
+            'Sanskrit for "one\'s own": what is innate to you and belongs to '
             'nobody else. That is the whole idea of the app: your clipboard, '
             'on your database, under your keys. No Appfide server sits in the '
             'middle, and no account stands between you and your own history.',

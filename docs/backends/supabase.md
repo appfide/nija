@@ -4,7 +4,22 @@ Direct client → Supabase project (PostgREST + Realtime). No server component.
 
 ## 1. Create the schema
 
-Run in **SQL Editor** (Dashboard → SQL → New query):
+Quickest: enter the project URL and key in the app and press **Test
+connection & schema**. Then either
+
+- **Set up automatically**: paste a [personal access
+  token](https://supabase.com/dashboard/account/tokens) with database write
+  access. Nija runs the setup through the Supabase Management API
+  (`POST /v1/projects/{ref}/database/query`, currently in beta), sends the
+  token only to `api.supabase.com` for that request, and does not store it.
+  Revoke the token afterwards if you like; or
+- **Copy setup SQL** and run it in the SQL Editor yourself.
+
+The script is generated for your table names and sign-in mode; it creates
+what is missing, upgrades older schemas, sets the row level security policy
+and enables realtime, and is safe to run more than once.
+
+Or by hand, run in **SQL Editor** (Dashboard → SQL → New query):
 
 ```sql
 -- Items -----------------------------------------------------------------
@@ -38,7 +53,7 @@ create table if not exists public.devices (
   platform    text not null default '',
   last_seen   timestamptz not null,
   app_version text,
-  status      text not null default 'active',       -- active | blocked | removed
+  status      text not null default 'active',       -- active | paused | blocked | removed
   role        text not null default 'full',         -- full | send_only | receive_only
   expires_at  timestamptz,
   paired_by   text,
@@ -49,7 +64,9 @@ create table if not exists public.devices (
   membership_version integer not null default 0,
   membership_sig text,
   key_version integer not null default 0,
-  key_envelope text
+  key_envelope text,
+  permissions text,                                 -- e.g. clear_history
+  admin_envelope text                               -- admin key sealed to box_pub
 );
 
 -- Realtime --------------------------------------------------------------
@@ -77,6 +94,17 @@ alter table public.devices
   add column if not exists membership_sig text,
   add column if not exists key_version integer not null default 0,
   add column if not exists key_envelope text;
+```
+
+### Upgrading to 0.5
+
+Needed only to grant permissions or make a member an admin from
+*Manage devices*; everything else keeps working without it.
+
+```sql
+alter table public.devices
+  add column if not exists permissions    text,
+  add column if not exists admin_envelope text;
 ```
 
 ## 2. Lock it down (Row Level Security)
