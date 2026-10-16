@@ -4,6 +4,7 @@
 
 [![CI](https://github.com/appfide/nija/actions/workflows/ci.yml/badge.svg)](https://github.com/appfide/nija/actions/workflows/ci.yml)
 [![Release](https://github.com/appfide/nija/actions/workflows/release.yml/badge.svg)](https://github.com/appfide/nija/releases)
+[![Latest release](https://img.shields.io/github/v/release/appfide/nija?label=latest)](https://github.com/appfide/nija/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > **निज** *(nija)* is Sanskrit for **"one's own"**: what is innate to you and belongs to nobody else.
@@ -14,9 +15,10 @@ Clipboard history that syncs across **macOS, Windows, Linux, Android and iOS** t
 - **Bring your own database**: each backend has its own schema and settings form; setup guides in [`docs/backends/`](docs/backends).
 - **End-to-end encryption** (optional): Argon2id-derived AES-256-GCM; the database only ever sees ciphertext.
 - **Desktop-native**: runs in the tray, global hotkey, start at login.
-- **Devices**: pair a new device with a PIN-protected QR code, give it a role (send-only / receive-only), temporary access, block or remove it, or send a clip to one device only. See [`docs/devices.md`](docs/devices.md).
+- **Devices**: pair a new device with a PIN-protected QR code, give it a role (send-only / receive-only), temporary access, pause, block or remove it, or send a clip to one device only. The admin can let a member clear the database or make it an admin too, and any device can leave the group or start a new one on the same database. See [`docs/devices.md`](docs/devices.md).
+- **Your history, your call**: delete a clip everywhere from the device that copied it, clear this device, or empty the database for the whole group; switch database sync off on one device while it keeps recording locally.
 - **Fast to use**: filter history by text, links, images or pinned; drive it from the keyboard (arrows and Enter, `⌘1` to `⌘9`, `⇧Enter` to preview); preview any clip in full with character, word and line counts, and copy it back as one line, trimmed, or in another case. Colour codes show a swatch, and the newest clips sit in the tray menu one click away.
-- **Privacy filters**: honours password-manager "do not record" hints, can skip anything that looks like a key or token, and capture can be paused from the tray.
+- **Privacy filters**: honours password-manager "do not record" hints, can skip anything that looks like a key or token, and capture can be paused from the tray. On macOS and iOS, copies that arrive through Universal Clipboard are left to the device they came from, so every clip keeps its real device name.
 - **Get it on the next device**: *About → Get it on your other devices* lists the current release's installer for macOS, Windows, Linux, Android and iOS, with a QR code per link so a phone can scan it straight off the desktop screen.
 - **Local-only mode**: works as a plain clipboard manager with no database at all.
 - **Enterprise repo hygiene**: secret scanning on every commit and in CI, SHA-pinned Actions, reproducible release builds with checksums.
@@ -51,7 +53,7 @@ Pick one and follow its guide:
 | Firebase Firestore | polling | [docs/backends/firestore.md](docs/backends/firestore.md) |
 | MongoDB | polling | [docs/backends/mongodb.md](docs/backends/mongodb.md) |
 
-Then open the app → *Settings → Database*, paste the values, **Test connection & schema**, save. Enable *End-to-end encryption* with the same passphrase on every device.
+Then open the app → *Settings → Database*, paste the values, **Test connection & schema**, save. For Supabase, *Set up automatically* creates the tables with a one-off personal access token (or *Copy setup SQL* to run it yourself). A new group is encrypted and signed by default; add the other devices from *Settings → Devices → Add a device*, which hands them the key through the PIN-protected pairing code.
 
 ## Platform notes
 
