@@ -31,6 +31,10 @@ class StatusPill extends StatelessWidget {
     final c = context.colors;
     final (color, label) = switch (status.phase) {
       SyncPhase.stopped => (c.muted, 'Local only'),
+      SyncPhase.idle when status.waitingForKey => (
+        c.warning,
+        compact ? 'No key' : 'Waiting for key',
+      ),
       SyncPhase.idle =>
         pending > 0
             ? (c.warning, compact ? 'Pending' : '$pending pending')

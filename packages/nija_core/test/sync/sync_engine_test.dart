@@ -830,6 +830,62 @@ void _membershipTests() {
     await e.dispose();
     await hanging.dispose();
   });
+
+  test(
+    'the heartbeat pulls what a dropped realtime connection missed',
+    () async {
+      final shared = MemoryStore();
+      final silent = _SilentRealtimeBackend(shared);
+      await silent.connect(const BackendConfig.empty('memory'));
+      final store = FakeLocalStore();
+      final e = SyncEngine(
+        backend: silent,
+        store: store,
+        device: deviceA,
+        pollInterval: const Duration(hours: 1),
+        heartbeatInterval: const Duration(milliseconds: 100),
+      );
+      await e.start();
+
+      // Another device writes; no realtime event reaches this one.
+      final other = MemoryBackend(shared: shared);
+      await other.connect(const BackendConfig.empty('memory'));
+      await other.upsert([
+        textItem('sent while the phone slept', deviceId: 'dev-b'),
+      ]);
+
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(
+        store.items.values.map((i) => i.content),
+        contains('sent while the phone slept'),
+      );
+      await e.dispose();
+      await silent.dispose();
+      await other.dispose();
+    },
+  );
+
+  test('a device without its key says so instead of only pending', () async {
+    final shared = MemoryStore();
+    final backend = MemoryBackend(shared: shared);
+    await backend.connect(const BackendConfig.empty('memory'));
+    final store = FakeLocalStore();
+    final e = SyncEngine(
+      backend: backend,
+      store: store,
+      device: deviceA,
+      cipherRing: CipherRing(),
+      pollInterval: const Duration(hours: 1),
+      heartbeatInterval: const Duration(hours: 1),
+    );
+    store.capture(textItem('held back'));
+    await e.start();
+    expect(shared.items, isEmpty, reason: 'never pushes without a key');
+    expect(e.status.waitingForKey, isTrue);
+    expect(e.status.phase, SyncPhase.idle);
+    await e.dispose();
+    await backend.dispose();
+  });
 }
 
 /// Every request waits forever while [hang] is set, like a socket that went
@@ -865,4 +921,13 @@ class _HangingBackend extends MemoryBackend {
       limit: limit,
     ),
   );
+}
+
+/// Realtime that never delivers, like a socket iOS closed in the background.
+class _SilentRealtimeBackend extends MemoryBackend {
+  _SilentRealtimeBackend(MemoryStore shared) : super(shared: shared);
+
+  @override
+  Stream<ClipItem> watch({required String excludeDeviceId}) =>
+      const Stream.empty();
 }
