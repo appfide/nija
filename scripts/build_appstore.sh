@@ -172,8 +172,12 @@ cp "$key_src" ~/private_keys/"AuthKey_$key_id.p8"
 chmod 600 ~/private_keys/"AuthKey_$key_id.p8"
 
 echo "uploading to App Store Connect..."
+log="$(dirname "$artifact")/transporter.log"
+# Transporter exits 0 even when App Store Connect rejects the package, so
+# the summary decides.
 xcrun iTMSTransporter -m upload -assetFile "$artifact" \
-  -apiKey "$key_id" -apiIssuer "$issuer" 2>&1 \
-  | grep -iE "error|warning|uploaded successfully|package summary" || true
+  -apiKey "$key_id" -apiIssuer "$issuer" > "$log" 2>&1 || true
+grep -iE "error|warning|uploaded successfully|package summary" "$log" || true
+grep -qi "uploaded successfully" "$log" || fail "upload rejected; see $log"
 
 echo "done. The build appears in TestFlight once Apple finishes processing it."
