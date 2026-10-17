@@ -824,14 +824,13 @@ class SyncController extends Notifier<SyncStatus> {
     await restart();
   }
 
-  /// Issues a fresh random passphrase to every verified active device.
-  /// Returns the new version.
-  Future<int> rotatePassphrase() async {
+  /// Issues a new passphrase, [passphrase] or a random one, to every
+  /// verified active device. Returns the new version.
+  Future<int> rotatePassphrase({String? passphrase}) async {
     final s = ref.read(settingsProvider);
     if (!s.encryptionEnabled) throw StateError('Encryption is off');
     final bytes = List<int>.generate(32, (_) => Random.secure().nextInt(256));
-    final passphrase = base64UrlEncode(bytes);
-    await _managed.rotatePassphrase(passphrase);
+    await _managed.rotatePassphrase(passphrase ?? base64UrlEncode(bytes));
     return _managed.status.keyVersion;
   }
 

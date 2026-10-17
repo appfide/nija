@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:clock/clock.dart';
@@ -89,6 +90,7 @@ class SyncEngine {
     this.heartbeatInterval = const Duration(minutes: 1),
     this.echoWindow = const Duration(seconds: 10),
     this.pushBatchSize = 50,
+    this.keyResendDelay = const Duration(seconds: 30),
     this.assumeRegistered = false,
     this._paused = false,
     this.onPausedChanged,
@@ -133,6 +135,12 @@ class SyncEngine {
   /// Max items per upsert call.
   final int pushBatchSize;
 
+  /// How long an admin waits before it hands out a fresh key because a
+  /// member seems to hold a different one. A rotation in progress writes
+  /// rows one by one, so a member briefly looks out of step; real drift
+  /// still shows on a later check.
+  final Duration keyResendDelay;
+
   /// Whether a missing own row means revocation (see constructor).
   final bool assumeRegistered;
 
@@ -166,6 +174,13 @@ class SyncEngine {
   DateTime? _lastMembership;
   final Map<String, int> _seenVersions;
   String? _lastTrustPrompt;
+
+  /// Members that seem to hold a different key than ours, with when that
+  /// was first noticed: their row carries a newer version than we have...
+  final Map<String, DateTime> _aheadSince = {};
+
+  /// ...or their signed clips at our current version do not open.
+  final Map<String, DateTime> _unreadableSince = {};
 
   /// Current status.
   SyncStatus get status => _status;
@@ -547,17 +562,32 @@ class SyncEngine {
   Future<int> rotatePassphrase(String newPassphrase) async {
     _requireAdminIfSigned();
     if (adminKey == null) throw StateError('Only the admin can rotate keys');
-    final version = (_ring?.currentVersion ?? 0) + 1;
-    var issued = 0;
     // Refresh first and issue only to the trusted set: it already excludes
     // blocked / expired / unverified rows *and* rolled-back rows that still
     // carry an older valid signature.
     await _membership();
-    // Paused devices get the key too: they will need it once resumed.
-    for (final d in [..._trusted.values, ..._held.values]) {
+    final version = (_ring?.currentVersion ?? 0) + 1;
+    final issued = await _issueKey(version, newPassphrase);
+    _log('passphrase rotated to v$version for $issued device(s)');
+    await _membership();
+    return issued;
+  }
+
+  /// Seals [passphrase] as [version] to every trusted active device with a
+  /// box key, this one last, and installs it here through [onKeyReceived].
+  Future<int> _issueKey(int version, String passphrase) async {
+    var issued = 0;
+    // Paused devices get the key too: they will need it once resumed. Our
+    // own row goes last, so a peer that reads the rows halfway through
+    // sees the issuer behind rather than ahead.
+    final targets = [..._trusted.values, ..._held.values]
+      ..sort(
+        (a, b) => (a.id == _device.id ? 1 : 0) - (b.id == _device.id ? 1 : 0),
+      );
+    for (final d in targets) {
       if (d.boxPub == null) continue;
       final env = await KeyEnvelope.seal(
-        passphrase: newPassphrase,
+        passphrase: passphrase,
         version: version,
         recipientBoxPub: d.boxPub!,
       );
@@ -568,11 +598,67 @@ class SyncEngine {
       );
       issued++;
     }
-    await onKeyReceived?.call(version, newPassphrase);
-    _emit(_status.copyWith(keyVersion: version));
-    _log('passphrase rotated to v$version for $issued device(s)');
-    await _membership();
+    await onKeyReceived?.call(version, passphrase);
+    _aheadSince.clear();
+    _unreadableSince.clear();
+    _emit(_status.copyWith(keyVersion: version, keyDrift: false));
     return issued;
+  }
+
+  /// Admin only: hands the group a fresh key when a member holds a
+  /// different one. That happens when a device lost its keyring and
+  /// started over, or a passphrase was typed on one device only: each side
+  /// then seals with a key the other cannot open, and comparing
+  /// fingerprints by hand does not fix it. The key is random rather than
+  /// our current one, which a removed device may know, and numbered above
+  /// every version in the group so that every member accepts it.
+  Future<void> _resendKeyOnDrift(DateTime now) async {
+    final ring = _ring;
+    final members = [
+      for (final d in [..._trusted.values, ..._held.values])
+        if (d.id != _device.id) d,
+    ];
+    final current = ring?.currentVersion ?? 0;
+    final ahead = {
+      for (final d in members)
+        if (ring != null && !ring.isEmpty && d.keyVersion > current) d.id,
+    };
+    _aheadSince.removeWhere((id, _) => !ahead.contains(id));
+    for (final id in ahead) {
+      _aheadSince.putIfAbsent(id, () => now);
+    }
+    _unreadableSince.removeWhere((id, _) => !members.any((d) => d.id == id));
+    final since = {..._unreadableSince, ..._aheadSince};
+    final drift = since.isNotEmpty;
+    if (drift != _status.keyDrift) {
+      _emit(_status.copyWith(keyDrift: drift));
+    }
+    if (!drift ||
+        ring == null ||
+        ring.isEmpty ||
+        adminKey == null ||
+        !isSignedGroup ||
+        onKeyReceived == null) {
+      return;
+    }
+    final settled = since.values.any(
+      (t) => now.difference(t) >= keyResendDelay,
+    );
+    if (!settled) return;
+    final names = [
+      for (final d in members)
+        if (since.containsKey(d.id)) d.name,
+    ];
+    final version = members.map((d) => d.keyVersion).fold(current, max) + 1;
+    final random = Random.secure();
+    final passphrase = base64UrlEncode(
+      List<int>.generate(32, (_) => random.nextInt(256)),
+    );
+    final issued = await _issueKey(version, passphrase);
+    _log(
+      '${names.join(', ')} held a different key; issued a fresh key '
+      'v$version to $issued device(s)',
+    );
   }
 
   /// Replaces the powers granted to [id]. Signed groups only: in a legacy
@@ -809,6 +895,24 @@ class SyncEngine {
             _log('no key v${raw.keyVersion} for ${raw.id}, skipped');
             skipped++;
             continue;
+          } else if (isSignedGroup) {
+            // Every key in a signed group arrives sealed from the admin, so
+            // a clip that does not open means the sender holds a different
+            // key under the same number. Skip it rather than stall the pull;
+            // the admin hands out a fresh key (see _resendKeyOnDrift).
+            try {
+              item = await c.open(raw);
+            } on CipherException {
+              if (v == _ring?.currentVersion) {
+                _unreadableSince.putIfAbsent(
+                  raw.deviceId,
+                  () => clock.now().toUtc(),
+                );
+              }
+              _log('key v$v does not open ${raw.id}, skipped');
+              skipped++;
+              continue;
+            }
           } else {
             item = await c.open(raw);
           }
@@ -1017,6 +1121,7 @@ class SyncEngine {
       _role = selfVerified || !isSignedGroup ? me.role : _role;
       _trusted = trusted;
       _held = held;
+      await _resendKeyOnDrift(now);
       _known = {for (final d in list) d.id};
       _devices = list;
       _lastMembership = now;
@@ -1110,6 +1215,7 @@ class SyncEngine {
     try {
       final passphrase = await KeyEnvelope.decode(env).open(keys);
       await onKeyReceived?.call(me.keyVersion, passphrase);
+      _unreadableSince.clear();
       _log('received passphrase v${me.keyVersion}');
     } on EnvelopeException catch (e) {
       _log('key envelope rejected', error: e);

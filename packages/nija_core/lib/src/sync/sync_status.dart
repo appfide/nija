@@ -40,6 +40,7 @@ class SyncStatus {
     this.signedGroup = false,
     this.selfVerified = true,
     this.keyVersion = 0,
+    this.keyDrift = false,
   });
 
   /// Initial status.
@@ -79,6 +80,11 @@ class SyncStatus {
   /// Newest passphrase version this device holds (0 = no encryption).
   final int keyVersion;
 
+  /// Whether another member seems to hold a different encryption key, so
+  /// clips between the two do not open. The group admin fixes it on its
+  /// own by issuing a fresh key; the other devices wait for it.
+  final bool keyDrift;
+
   /// Copy with fields replaced.
   SyncStatus copyWith({
     SyncPhase? phase,
@@ -92,6 +98,7 @@ class SyncStatus {
     bool? signedGroup,
     bool? selfVerified,
     int? keyVersion,
+    bool? keyDrift,
     bool clearError = false,
   }) => SyncStatus(
     phase: phase ?? this.phase,
@@ -105,6 +112,7 @@ class SyncStatus {
     signedGroup: signedGroup ?? this.signedGroup,
     selfVerified: selfVerified ?? this.selfVerified,
     keyVersion: keyVersion ?? this.keyVersion,
+    keyDrift: keyDrift ?? this.keyDrift,
   );
 
   @override

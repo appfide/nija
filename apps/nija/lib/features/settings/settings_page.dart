@@ -547,8 +547,15 @@ class _EncryptionRowState extends ConsumerState<_EncryptionRow> {
           'Use the same passphrase on every device. If you lose it, synced history cannot be read.',
     );
     if (pass == null || pass.isEmpty) return;
-    await repo.savePassphrase(pass);
-    await notifier.update((x) => x.copyWith(encryptionEnabled: true));
+    if (controller.isSignedGroup &&
+        ref.read(settingsProvider).encryptionEnabled) {
+      // Saving it here alone would leave every other device on the old key:
+      // hand it to the whole group instead.
+      await controller.rotatePassphrase(passphrase: pass);
+    } else {
+      await repo.savePassphrase(pass);
+      await notifier.update((x) => x.copyWith(encryptionEnabled: true));
+    }
     await _refresh();
   }
 
@@ -556,6 +563,7 @@ class _EncryptionRowState extends ConsumerState<_EncryptionRow> {
   Widget build(BuildContext context) {
     final s = ref.watch(settingsProvider);
     final status = ref.watch(syncControllerProvider);
+    final controller = ref.read(syncControllerProvider.notifier);
     final c = context.colors;
     return Column(
       children: [
@@ -564,9 +572,14 @@ class _EncryptionRowState extends ConsumerState<_EncryptionRow> {
               ? Icons.lock_rounded
               : Icons.lock_open_rounded,
           title: 'End-to-end encryption',
-          subtitle: s.encryptionEnabled
-              ? 'On · key v${status.keyVersion} · fingerprint ${_fingerprint ?? '…'}: must match on every device'
-              : 'Off · the database can read your clipboard',
+          subtitle: !s.encryptionEnabled
+              ? 'Off · the database can read your clipboard'
+              : status.keyDrift
+              ? 'On · key v${status.keyVersion} · another device holds a different key. '
+                    '${controller.isAdmin ? 'Nija is sending it a fresh one.' : 'The admin device sends a fresh one when it is online.'}'
+              : controller.isSignedGroup
+              ? 'On · key v${status.keyVersion} · fingerprint ${_fingerprint ?? '…'} · delivered sealed to every device'
+              : 'On · key v${status.keyVersion} · fingerprint ${_fingerprint ?? '…'}: must match on every device',
           value: s.encryptionEnabled,
           onChanged: _toggle,
         ),

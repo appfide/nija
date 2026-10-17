@@ -55,6 +55,7 @@ class Node {
     Map<int, String>? passphrases,
     bool assumeRegistered = false,
     bool encrypted = true,
+    Duration keyResendDelay = const Duration(seconds: 30),
   }) async {
     if (passphrases != null) this.passphrases.addAll(passphrases);
     final ring = await CipherRing.fromPassphrases(
@@ -76,6 +77,7 @@ class Node {
       onAdminKeyReceived: (k) async => adminKeys.add(k),
       pollInterval: const Duration(hours: 1),
       heartbeatInterval: const Duration(hours: 1),
+      keyResendDelay: keyResendDelay,
       assumeRegistered: assumeRegistered,
       logger: (m, {error}) => log.add(m),
     );
@@ -475,6 +477,116 @@ void main() {
       await admin.engine!.syncNow();
       expect(admin.received, isEmpty);
       await again.stop();
+    });
+
+    group('key drift', () {
+      /// The admin starts over with a keyring of its own, as after losing
+      /// it: same device, same admin key, a passphrase nobody else has.
+      Future<Node> restartAdminWith(
+        Map<int, String> ring, {
+        Duration delay = Duration.zero,
+      }) async {
+        await admin.stop();
+        // The device that created the key never had an envelope of its own
+        // to recover it from.
+        atk.setRow(
+          await ClipSigning.signMembership(
+            atk.row('A').copyWith(clearEnvelope: true),
+            adminKey,
+          ),
+        );
+        admin = await Node.create(
+          shared,
+          'A',
+          'Admin laptop',
+          keys: admin.keys,
+        );
+        await admin.start(
+          adminKey: adminKey,
+          trustedAdminPub: adminKey.publicKey,
+          passphrases: ring,
+          assumeRegistered: true,
+          keyResendDelay: delay,
+        );
+        return admin;
+      }
+
+      test('an admin that lost its keyring re-keys the member', () async {
+        await admin.engine!.rotatePassphrase('group passphrase v2');
+        await member.engine!.refreshDevices();
+        expect(member.passphrases.keys, [1, 2]);
+
+        await restartAdminWith({1: 'started over'});
+        final fresh = admin.passphrases[3];
+        expect(fresh, isNotNull);
+        expect(
+          fresh,
+          isNot(anyOf(pass1, 'group passphrase v2', 'started over')),
+        );
+        expect(atk.row('B').keyVersion, 3);
+        expect(
+          admin.log.any((l) => l.contains('held a different key')),
+          isTrue,
+        );
+
+        await member.engine!.refreshDevices();
+        expect(member.passphrases[3], fresh);
+        await admin.say('after the drift');
+        await member.engine!.syncNow();
+        expect(member.received, contains('after the drift'));
+        await member.say('and back');
+        await admin.engine!.syncNow();
+        expect(admin.received, contains('and back'));
+      });
+
+      test('a clip that does not open at the same version re-keys', () async {
+        await restartAdminWith({1: 'started over'});
+        expect(admin.passphrases.keys, [1], reason: 'rows look in step');
+
+        await member.say('sealed with the old v1');
+        await admin.engine!.syncNow();
+        expect(admin.engine!.status.phase, isNot(SyncPhase.error));
+        expect(admin.received, isEmpty);
+
+        await admin.engine!.refreshDevices();
+        expect(admin.passphrases.keys, [1, 2]);
+        await member.engine!.refreshDevices();
+        expect(member.passphrases[2], admin.passphrases[2]);
+        await member.say('sealed with v2');
+        await admin.engine!.syncNow();
+        expect(admin.received, ['sealed with v2']);
+      });
+
+      test(
+        'the admin waits out a rotation that is still being written',
+        () async {
+          await admin.engine!.rotatePassphrase('group passphrase v2');
+          await restartAdminWith(
+            {1: 'started over'},
+            delay: const Duration(hours: 1),
+          );
+          expect(admin.engine!.status.keyDrift, isTrue);
+          expect(admin.passphrases.keys, [1]);
+          expect(atk.row('B').keyVersion, 2);
+        },
+      );
+
+      test('a member never re-keys the group on its own', () async {
+        await admin.engine!.rotatePassphrase('group passphrase v2');
+        await member.stop();
+        member = await Node.create(shared, 'B', 'Phone', keys: member.keys);
+        await member.start(
+          trustedAdminPub: adminKey.publicKey,
+          passphrases: {3: 'typed on the phone'},
+          keyResendDelay: Duration.zero,
+        );
+        await admin.say('sealed with v2');
+        await member.engine!.syncNow();
+        await member.engine!.refreshDevices();
+        expect(member.engine!.status.phase, isNot(SyncPhase.error));
+        expect(member.passphrases.keys, [3]);
+        expect(atk.row('B').keyVersion, 2);
+      });
     });
 
     test('only the admin can manage a signed group', () async {
