@@ -10,7 +10,9 @@
 > **निज** *(nija)* is Sanskrit for **"one's own"**: what is innate to you and belongs to nobody else.
 > That is the whole product: your clipboard, on your database, under your keys.
 
-Clipboard history that syncs across **macOS, Windows, Linux, Android and iOS** through a database **you** provide. There is no Appfide server in the loop: the app talks directly to your Supabase, PocketBase, CouchDB, Firestore or MongoDB with the credentials you enter in Settings.
+Clipboard history that syncs across **macOS, Windows, Linux, Android, iOS and iPadOS** through a database **you** provide.
+
+**Your data stays in your own database, not on anyone else's server.** There is no Appfide server and no Nija account: the app talks directly to your Supabase, PocketBase, CouchDB, Firestore or MongoDB with the credentials you enter in Settings, and with end-to-end encryption that database only ever holds ciphertext. Nothing is collected and nothing is tracked; see the [privacy policy](PRIVACY.md).
 
 - **Bring your own database**: each backend has its own schema and settings form; setup guides in [`docs/backends/`](docs/backends).
 - **End-to-end encryption** (optional): Argon2id-derived AES-256-GCM; the database only ever sees ciphertext.
@@ -39,7 +41,10 @@ Clipboard history that syncs across **macOS, Windows, Linux, Android and iOS** t
 
 ## Install
 
-Download the latest installer from [Releases](https://github.com/appfide/nija/releases): `.dmg`, `.exe`, `.deb` / `.AppImage`, `.apk`, unsigned `.ipa`. Builds are currently unsigned; see [docs/release.md](docs/release.md#installing-unsigned-builds).
+- **Mac, iPhone and iPad**: the [App Store](https://apps.apple.com/app/id6815114824) (paid; it funds development and gets you builds signed by Apple with automatic updates).
+- **Every platform**: the latest installer from [Releases](https://github.com/appfide/nija/releases): `.dmg`, `.exe`, `.deb` / `.AppImage`, `.apk`, unsigned `.ipa`. See [docs/release.md](docs/release.md#installing-unsigned-builds) for opening unsigned builds.
+
+Copies from either source sync with each other.
 
 ## Set up a database
 
@@ -52,6 +57,38 @@ Pick one and follow its guide:
 | CouchDB / Cloudant | ✅ | [docs/backends/couchdb.md](docs/backends/couchdb.md) |
 | Firebase Firestore | polling | [docs/backends/firestore.md](docs/backends/firestore.md) |
 | MongoDB | polling | [docs/backends/mongodb.md](docs/backends/mongodb.md) |
+
+### Quick start for each database
+
+Every option below has a free tier or runs on your own machine. The full guides add row level security, retention and upgrade notes.
+
+**Supabase** (hosted Postgres, realtime)
+1. Create a project at [supabase.com](https://supabase.com/dashboard).
+2. Authentication → Users → *Add user* (tick *Auto confirm*); this is the login the app uses.
+3. In Nija: *Choose a database → Supabase*, enter the Project URL and the publishable key from *Settings → API*, and the user's email and password.
+4. Press *Test connection & schema*, then *Set up automatically* (paste a [personal access token](https://supabase.com/dashboard/account/tokens) once; it is not stored) or *Copy setup SQL* and run it in the SQL Editor. Save.
+
+**PocketBase** (one self-hosted binary, realtime)
+1. Download [PocketBase](https://pocketbase.io/docs/) and run `./pocketbase serve`.
+2. Admin UI → Settings → *Import collections*, paste the JSON from [the guide](docs/backends/pocketbase.md).
+3. Collections → `users` → *New record* with an email and password.
+4. In Nija: *PocketBase*, enter the server URL (for example `http://192.168.1.10:8090`) and that email and password. Test, save.
+
+**CouchDB or IBM Cloudant** (realtime)
+1. Create a database named `nija` and its index (two `curl` commands in [the guide](docs/backends/couchdb.md)).
+2. Create a non-admin user and make it a member of `nija`.
+3. In Nija: *CouchDB*, enter the server URL, `nija` and that user. Test, save.
+
+**Firebase Firestore** (polling)
+1. Create a project at [console.firebase.google.com](https://console.firebase.google.com), then a Firestore database in production mode.
+2. Authentication → enable *Email/Password* and add a user.
+3. Paste the security rules from [the guide](docs/backends/firestore.md).
+4. In Nija: *Firestore*, enter the Project ID, the Web API key and that user. Test, save.
+
+**MongoDB Atlas or self-hosted** (polling)
+1. Create a database user with `readWrite` on a database named `nija`, and allow your devices' IP addresses.
+2. Create the `clip_items` and `devices` collections and the index (three `mongosh` lines in [the guide](docs/backends/mongodb.md)).
+3. In Nija: *MongoDB*, paste the connection string `mongodb+srv://USER:PASSWORD@cluster…/nija`. Test, save.
 
 Then open the app → *Settings → Database*, paste the values, **Test connection & schema**, save. For Supabase, *Set up automatically* creates the tables with a one-off personal access token (or *Copy setup SQL* to run it yourself). A new group is encrypted and signed by default; add the other devices from *Settings → Devices → Add a device*, which hands them the key through the PIN-protected pairing code.
 

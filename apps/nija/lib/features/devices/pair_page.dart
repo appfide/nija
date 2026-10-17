@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:nija/core/build_info.dart';
 import 'package:nija/core/relative_time.dart';
 import 'package:nija/features/devices/device_widgets.dart';
 import 'package:nija/features/sync/sync_controller.dart';
@@ -369,16 +368,15 @@ class _Steps extends StatelessWidget {
             ),
           ),
         // Step 1 assumes the app is already installed over there.
-        if (!BuildInfo.storeBuild)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              key: const ValueKey('pair-get-app'),
-              onPressed: () => context.push('/about/downloads'),
-              icon: const Icon(Icons.devices_rounded, size: 18),
-              label: const Text('That device does not have the app yet'),
-            ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const ValueKey('pair-get-app'),
+            onPressed: () => context.push('/about/downloads'),
+            icon: const Icon(Icons.devices_rounded, size: 18),
+            label: const Text('That device does not have the app yet'),
           ),
+        ),
       ],
     );
   }

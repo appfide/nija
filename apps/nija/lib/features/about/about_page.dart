@@ -27,19 +27,18 @@ class AboutPage extends StatelessWidget {
               Text('About', style: theme.textTheme.headlineSmall),
               const SizedBox(height: 16),
               // ---- Other devices ------------------------------------------
-              if (!BuildInfo.storeBuild) ...[
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: SettingRow(
-                    icon: Icons.devices_rounded,
-                    title: 'Get it on your other devices',
-                    subtitle:
-                        'Installers for macOS, Windows, Linux, Android and iOS',
-                    onTap: () => context.push('/about/downloads'),
-                  ),
+              Card(
+                clipBehavior: Clip.antiAlias,
+                child: SettingRow(
+                  icon: Icons.devices_rounded,
+                  title: 'Get it on your other devices',
+                  subtitle: BuildInfo.storeBuild
+                      ? 'Windows, Linux and Android installers on GitHub'
+                      : 'Installers for macOS, Windows, Linux, Android and iOS',
+                  onTap: () => context.push('/about/downloads'),
                 ),
-                const SizedBox(height: 16),
-              ],
+              ),
+              const SizedBox(height: 16),
               // ---- App ----------------------------------------------------
               Card(
                 child: Padding(
