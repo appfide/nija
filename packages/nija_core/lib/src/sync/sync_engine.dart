@@ -266,7 +266,10 @@ class SyncEngine {
     } else {
       _pollTimer = Timer.periodic(pollInterval, (_) => syncNow());
     }
-    _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => _membership());
+    // Each heartbeat also pulls. A realtime connection can drop without an
+    // error (iOS closes it while the app is in the background), and the
+    // events it missed are never replayed.
+    _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => _beat());
 
     await syncNow();
   }
@@ -294,6 +297,11 @@ class SyncEngine {
     await _incomingCtl.close();
     await _devicesCtl.close();
     await _trustCtl.close();
+  }
+
+  Future<void> _beat() async {
+    if (!await _membership()) return;
+    await syncNow();
   }
 
   /// Push the outbox then pull remote changes. Coalesces concurrent calls:
@@ -816,8 +824,10 @@ class SyncEngine {
       // Encryption is on but no passphrase has arrived yet (joined with a
       // sealed key that is still in transit). Never push plaintext.
       _log('waiting for the group passphrase before pushing');
+      if (!_status.waitingForKey) _emit(_status.copyWith(waitingForKey: true));
       return;
     }
+    if (_status.waitingForKey) _emit(_status.copyWith(waitingForKey: false));
     final cipher = ring?.current;
     final version = ring?.currentVersion ?? 0;
     while (true) {

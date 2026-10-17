@@ -41,6 +41,7 @@ class SyncStatus {
     this.selfVerified = true,
     this.keyVersion = 0,
     this.keyDrift = false,
+    this.waitingForKey = false,
   });
 
   /// Initial status.
@@ -85,6 +86,11 @@ class SyncStatus {
   /// own by issuing a fresh key; the other devices wait for it.
   final bool keyDrift;
 
+  /// Encryption is on but this device holds no key, so it sends nothing and
+  /// cannot read what it receives. The key arrives sealed in the device's
+  /// row; when that never happens the device has to be paired again.
+  final bool waitingForKey;
+
   /// Copy with fields replaced.
   SyncStatus copyWith({
     SyncPhase? phase,
@@ -99,6 +105,7 @@ class SyncStatus {
     bool? selfVerified,
     int? keyVersion,
     bool? keyDrift,
+    bool? waitingForKey,
     bool clearError = false,
   }) => SyncStatus(
     phase: phase ?? this.phase,
@@ -113,6 +120,7 @@ class SyncStatus {
     selfVerified: selfVerified ?? this.selfVerified,
     keyVersion: keyVersion ?? this.keyVersion,
     keyDrift: keyDrift ?? this.keyDrift,
+    waitingForKey: waitingForKey ?? this.waitingForKey,
   );
 
   @override

@@ -574,6 +574,10 @@ class _EncryptionRowState extends ConsumerState<_EncryptionRow> {
           title: 'End-to-end encryption',
           subtitle: !s.encryptionEnabled
               ? 'Off · the database can read your clipboard'
+              : status.waitingForKey
+              ? 'On · this device has no key yet, so it sends nothing and '
+                    'cannot read other devices. The admin device seals one to '
+                    'it; if none arrives, pair this device again.'
               : status.keyDrift
               ? 'On · key v${status.keyVersion} · another device holds a different key. '
                     '${controller.isAdmin ? 'Nija is sending it a fresh one.' : 'The admin device sends a fresh one when it is online.'}'

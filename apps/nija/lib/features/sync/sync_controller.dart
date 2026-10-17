@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:nija/core/build_info.dart';
 import 'package:nija/core/logging.dart';
@@ -131,6 +132,7 @@ class SyncController extends Notifier<SyncStatus> {
   SyncEngine? _engine;
   SyncBackend? _backend;
   ClipboardService? _clipboard;
+  AppLifecycleListener? _resume;
   StreamSubscription<SyncStatus>? _statusSub;
   StreamSubscription<List<ClipItem>>? _incomingSub;
   StreamSubscription<List<Device>>? _devicesSub;
@@ -267,6 +269,11 @@ class SyncController extends Notifier<SyncStatus> {
       _captureSub = c.captured.listen(_onCaptured);
       _clipboard = c;
       await c.start();
+    }
+    // A phone back in the foreground has missed whatever arrived while it
+    // was suspended, realtime included: catch up at once.
+    if (PlatformInfo.isMobile) {
+      _resume ??= AppLifecycleListener(onResume: () => unawaited(syncNow()));
     }
     await engineStarted;
   }
@@ -901,6 +908,9 @@ class SyncController extends Notifier<SyncStatus> {
       return;
     }
     if (keysEncoded == null) {
+      // In a group that is already signed this leaves the device unable
+      // to open its key or sign for its row; say so in Diagnostics.
+      log.w('no device keys stored; created new ones');
       final fresh = await DeviceKeys.generate();
       keysEncoded = await fresh.encode();
       await repo.saveDeviceKeys(keysEncoded);
@@ -1058,6 +1068,8 @@ class SyncController extends Notifier<SyncStatus> {
 
   Future<void> _teardown() async {
     await _stopEngine();
+    _resume?.dispose();
+    _resume = null;
     await _captureSub?.cancel();
     await _clipboard?.dispose();
     _clipboard = null;
