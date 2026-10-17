@@ -72,8 +72,10 @@ Switching to another database:
   (`local_only`): none of it is in the new database and none of it is sent
   there, so a new database never receives old history unasked. Clips the new
   database already holds turn back to *In &lt;database&gt;* when pulled;
-- keeps keys and admin trust per database, so a signed group on one does not
-  carry over to the other.
+- keeps the admin key and pinned admin per database, so a signed group on
+  one does not carry over to the other. The encryption keyring belongs to
+  the device, not the database: joining the new group by pairing replaces
+  it, and typing credentials by hand keeps the passphrase you enter.
 
 Each history row shows which of the three states a clip is in: *In
 &lt;database&gt;* (`synced`), *Waiting to sync* (in the outbox) or *Only on
