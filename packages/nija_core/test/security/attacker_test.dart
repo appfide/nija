@@ -862,6 +862,53 @@ void main() {
       expect(k.fingerprint, matches(RegExp(r'^[0-9a-f]{4} [0-9a-f]{4}$')));
     });
 
+    test('a signature survives a database that keeps milliseconds', () async {
+      // PocketBase and MongoDB store times to the millisecond; the app's
+      // clock has microseconds.
+      DateTime ms(DateTime t) => DateTime.fromMillisecondsSinceEpoch(
+        t.millisecondsSinceEpoch,
+        isUtc: true,
+      );
+      final k = await DeviceKeys.generate();
+      final at = DateTime.utc(2026, 10, 17, 15, 0, 47, 831, 526);
+      final signed = await ClipSigning.signItem(
+        ClipItem.fromMap({
+          'id': 'c',
+          'device_id': 'd',
+          'device_name': 'Android',
+          'content_type': 'text',
+          'content': 'hello',
+          'content_hash': 'h',
+          'size_bytes': 5,
+          'created_at': at.toIso8601String(),
+          'updated_at': at.toIso8601String(),
+          'deleted_at': at.toIso8601String(),
+        }),
+        k,
+      );
+      final stored = ClipItem.fromMap({
+        ...signed.toMap(),
+        'created_at': ms(signed.createdAt).toIso8601String(),
+        'updated_at': ms(signed.updatedAt).toIso8601String(),
+        'deleted_at': ms(signed.deletedAt!).toIso8601String(),
+      });
+      expect(await ClipSigning.verifyItem(stored, k.signPub), isTrue);
+
+      final admin = await AdminKey.generate();
+      final row = await ClipSigning.signMembership(
+        Device.fromMap({'id': 'd', 'expires_at': at.toIso8601String()}),
+        admin,
+      );
+      final reread = Device.fromMap({
+        ...row.toMap(),
+        'expires_at': ms(row.expiresAt!).toIso8601String(),
+      });
+      expect(
+        await ClipSigning.verifyMembership(reread, admin.publicKey),
+        isTrue,
+      );
+    });
+
     test('envelope opens only for the recipient', () async {
       final a = await DeviceKeys.generate();
       final b = await DeviceKeys.generate();
