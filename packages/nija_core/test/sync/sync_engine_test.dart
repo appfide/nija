@@ -475,6 +475,29 @@ void _membershipTests() {
     await e.dispose();
   });
 
+  test(
+    'joining again replaces a removed row from an earlier membership',
+    () async {
+      shared.devices['dev-b'] = deviceB;
+      shared.devices['dev-a'] = deviceA.copyWith(status: DeviceStatus.removed);
+      final e = engine();
+      await e.start();
+      expect(revoked, isEmpty);
+      expect(e.status.phase, SyncPhase.idle);
+      expect(shared.devices['dev-a']!.status, DeviceStatus.active);
+      await e.dispose();
+    },
+  );
+
+  test('a registered device still obeys a removed row', () async {
+    shared.devices['dev-a'] = deviceA.copyWith(status: DeviceStatus.removed);
+    final e = engine(assumeRegistered: true);
+    await e.start();
+    expect(revoked, ['removed']);
+    expect(shared.devices['dev-a']!.status, DeviceStatus.removed);
+    await e.dispose();
+  });
+
   test('status removed set later is noticed on the next heartbeat', () async {
     final e = engine();
     await e.start();

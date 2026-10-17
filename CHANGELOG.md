@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Fixed
+- A device that was once removed from a group could never join that database again: its old row, still marked *removed*, made it disconnect itself seconds after every connect and forget the credentials (and, with *Start a new group*, the admin key it had just created, which failed with *No admin key*). A device joining with typed credentials now replaces such a row with a fresh one. A row marked *blocked* still applies, and in a signed group the new row waits for the admin like any new device.
 - macOS showed *OS credential store unavailable* after connecting a database that has no password, such as Supabase with an anon key, although every credential was in the keychain. Clearing a credential the keychain never held failed there (the macOS file keychain answers with -34018 because the storage plugin also clears the iCloud copy), and the app retried that delete on every launch. A credential that is not in the keychain now counts as already deleted.
 
 ### Changed

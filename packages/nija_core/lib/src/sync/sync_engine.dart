@@ -875,6 +875,20 @@ class SyncEngine {
     }
     try {
       var me = list.where((d) => d.id == _device.id).firstOrNull;
+      if (me?.status == DeviceStatus.removed &&
+          !(_registered || assumeRegistered)) {
+        // Left over from an earlier membership of this device: it is joining
+        // again with credentials typed in, which is what removal asks for.
+        // The new row starts unsigned, so a signed group still requires the
+        // admin to approve it. A blocked row keeps applying.
+        _log('replacing a removed row left by an earlier membership');
+        await _backend.deleteDevice(_device.id);
+        list = [
+          for (final d in list)
+            if (d.id != _device.id) d,
+        ];
+        me = null;
+      }
       // Only publish our own keys when the row does not carry any yet: in a
       // signed group the admin-signed keys are authoritative.
       final presence = _device.copyWith(
