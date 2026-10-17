@@ -187,7 +187,11 @@ Future<void> _showTrust(
     builder: (ctx) => AlertDialog(
       key: const ValueKey('trust-dialog'),
       icon: Icon(Icons.shield_rounded, color: theme.colorScheme.primary),
-      title: const Text('This group is now managed'),
+      title: Text(
+        t.replacesPinned
+            ? "This group's admin key changed"
+            : 'This group is now managed',
+      ),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 440),
         child: Column(
@@ -195,9 +199,15 @@ Future<void> _showTrust(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '${t.adminDeviceName.isEmpty ? 'A device' : t.adminDeviceName} secured this sync group with an admin key. '
-              'Open Settings → Devices on that device and compare the fingerprint before trusting it. '
-              'If it does not match, do not trust: someone with your database credentials may be trying to take over the group.',
+              t.replacesPinned
+                  ? '${t.adminDeviceName.isEmpty ? 'A device' : t.adminDeviceName} now signs this group with a different admin key from the one this device trusts. '
+                        'Until you trust it, this device sends nothing and cannot read the other devices. '
+                        'This happens when the admin device lost its keys and secured the group again. '
+                        'Open Settings → Devices on that device and compare the fingerprint. '
+                        'If it does not match, do not trust: someone with your database credentials may be trying to take over the group.'
+                  : '${t.adminDeviceName.isEmpty ? 'A device' : t.adminDeviceName} secured this sync group with an admin key. '
+                        'Open Settings → Devices on that device and compare the fingerprint before trusting it. '
+                        'If it does not match, do not trust: someone with your database credentials may be trying to take over the group.',
             ),
             const SizedBox(height: 16),
             Center(

@@ -741,6 +741,68 @@ void main() {
     });
   });
 
+  group('admin key replaced', () {
+    setUp(setUpSignedGroup);
+    tearDown(() async {
+      await admin.stop();
+      await member.stop();
+    });
+
+    test('a member asks before following an admin that started over, '
+        'then syncs again', () async {
+      // The admin device lost its admin key and secured the group again
+      // with a new one, re-signing the member's row and sealing it a key.
+      await admin.stop();
+      final newKey = await AdminKey.generate();
+      admin = await Node.create(shared, 'A', 'Admin laptop', keys: admin.keys);
+      await admin.start(
+        adminKey: newKey,
+        trustedAdminPub: newKey.publicKey,
+        passphrases: {2: 'after starting over'},
+        assumeRegistered: true,
+      );
+      await admin.engine!.secureGroup();
+      await admin.engine!.rotatePassphrase('after starting over again');
+      await admin.say('from the new admin');
+
+      // The member still pins the old key: it reads nothing and asks.
+      await member.engine!.refreshDevices();
+      await member.engine!.syncNow();
+      expect(member.received, isNot(contains('from the new admin')));
+      expect(member.engine!.status.selfVerified, isFalse);
+      expect(member.trustPrompts.map((t) => t.adminPub), [newKey.publicKey]);
+      expect(member.trustPrompts.single.replacesPinned, isTrue);
+      expect(member.trustPrompts.single.adminDeviceName, 'Admin laptop');
+
+      // Asking again on the next heartbeat would nag; once is enough.
+      await member.engine!.refreshDevices();
+      expect(member.trustPrompts, hasLength(1));
+
+      // The user compared fingerprints and trusted it.
+      await member.engine!.dispose();
+      member = await Node.create(shared, 'B', 'Phone', keys: member.keys)
+        ..passphrases.addAll(member.passphrases);
+      await member.start(
+        trustedAdminPub: newKey.publicKey,
+        assumeRegistered: true,
+      );
+      expect(member.engine!.status.selfVerified, isTrue);
+      expect(member.received, contains('from the new admin'));
+      await member.say('from the member');
+      await admin.engine!.syncNow();
+      expect(admin.received, contains('from the member'));
+    });
+
+    test('an unsigned or forged row does not prompt', () async {
+      final forger = await AdminKey.generate();
+      final row = atk.row('B');
+      // Claims another admin key without a valid signature from it.
+      atk.setRow(row.copyWith(adminPub: forger.publicKey));
+      await member.engine!.refreshDevices();
+      expect(member.trustPrompts, isEmpty);
+    });
+  });
+
   group('legacy group (no admin pinned)', () {
     late Node a;
     late Node b;

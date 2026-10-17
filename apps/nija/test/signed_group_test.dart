@@ -293,6 +293,57 @@ void main() {
     await host.dispose();
   });
 
+  test('trusting an admin that started over brings a member back', () async {
+    final shared = MemoryStore();
+    final host = await _boot(_host.copyWith(encryptionEnabled: false), shared);
+    await host.sync.start();
+    await host.sync.secureNewGroup();
+    final session = await host.sync.createPairing(
+      role: DeviceRole.full,
+      includePassphrase: true,
+      grantAdmin: true,
+    );
+    final joiner = await _boot(
+      const AppSettings(deviceId: 'j', deviceName: 'Phone', onboarded: true),
+      shared,
+    );
+    await joiner.sync.start();
+    await joiner.sync.joinFromPairing(
+      await PairingCodec.open(session.code, session.pin),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(joiner.sync.isAdmin, isTrue);
+
+    // The host loses its admin key and secures the group again.
+    final scope = host.c.read(settingsProvider).backendScope;
+    await host.c.read(settingsRepositoryProvider).clearGroupTrust(scope);
+    await host.sync.restart();
+    await host.sync.secureGroup();
+    await host.sync.rotatePassphrase();
+    final newPub = host.sync.adminPublicKey!;
+    await host.c
+        .read(localStoreProvider)
+        .capture(_clip('after starting over', device: 'host-id'));
+    await host.sync.syncNow();
+
+    await joiner.sync.refreshDevices();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    final ask = joiner.c.read(pendingTrustProvider);
+    expect(ask?.adminPub, newPub);
+    expect(ask?.replacesPinned, isTrue);
+    expect(ask?.adminDeviceName, 'Host');
+    expect(await _history(joiner), isNot(contains('after starting over')));
+
+    await joiner.sync.trustAdmin(newPub);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(joiner.status.selfVerified, isTrue);
+    expect(joiner.status.waitingForKey, isFalse);
+    expect(joiner.sync.isAdmin, isFalse, reason: 'the old admin key is gone');
+    expect(await _history(joiner), contains('after starting over'));
+    await joiner.dispose();
+    await host.dispose();
+  });
+
   test(
     'joining a signed group without the sealed passphrase asks for it',
     () async {

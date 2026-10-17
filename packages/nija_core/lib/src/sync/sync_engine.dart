@@ -32,13 +32,23 @@ typedef AdminKeyReceived = Future<void> Function(String encodedAdminKey);
 /// with the admin device before trusting it.
 class PendingTrust {
   /// Creates the request.
-  const PendingTrust({required this.adminPub, required this.adminDeviceName});
+  const PendingTrust({
+    required this.adminPub,
+    required this.adminDeviceName,
+    this.replacesPinned = false,
+  });
 
   /// Admin public key, base64.
   final String adminPub;
 
   /// Name of the device row flagged `admin` under that key, if any.
   final String adminDeviceName;
+
+  /// The group was already signed under another admin key that this
+  /// device trusts, and [adminPub] now signs this device's own row: the
+  /// admin device lost its key and secured the group again, or someone
+  /// with database access is trying to take it over.
+  final bool replacesPinned;
 
   /// Comparable fingerprint.
   String get fingerprint => keyFingerprint(adminPub);
@@ -797,7 +807,14 @@ class SyncEngine {
         return;
       }
       if (_role.canSend) await _push();
-      if (_role.canReceive) await _pull();
+      // Without a key every encrypted clip would be skipped and the cursor
+      // would move past it for good. Leave them until the key arrives.
+      final ring = _ring;
+      final keyless = ring != null && ring.isEmpty;
+      if (_role.canReceive && !keyless) await _pull();
+      if (keyless != _status.waitingForKey) {
+        _emit(_status.copyWith(waitingForKey: keyless));
+      }
       _failures = 0;
       final pending = (await _store.pendingOutbox(limit: 1)).length;
       _emit(
@@ -824,10 +841,8 @@ class SyncEngine {
       // Encryption is on but no passphrase has arrived yet (joined with a
       // sealed key that is still in transit). Never push plaintext.
       _log('waiting for the group passphrase before pushing');
-      if (!_status.waitingForKey) _emit(_status.copyWith(waitingForKey: true));
       return;
     }
-    if (_status.waitingForKey) _emit(_status.copyWith(waitingForKey: false));
     final cipher = ring?.current;
     final version = ring?.currentVersion ?? 0;
     while (true) {
@@ -1135,6 +1150,33 @@ class SyncEngine {
             PendingTrust(
               adminPub: seenAdmin,
               adminDeviceName: seenAdminName ?? '',
+            ),
+          );
+        }
+      }
+
+      // Signed group whose own row now carries another admin key's valid
+      // signature. Until the user trusts it this device can neither obey
+      // its row nor open the key sealed in it, so ask instead of going
+      // quiet.
+      final otherAdmin = me.adminPub;
+      if (isSignedGroup &&
+          !selfVerified &&
+          otherAdmin != null &&
+          otherAdmin != trustedAdminPub &&
+          otherAdmin != _lastTrustPrompt &&
+          await ClipSigning.verifyMembership(me, otherAdmin)) {
+        _lastTrustPrompt = otherAdmin;
+        final by = list
+            .where((d) => d.id != me!.id && d.admin && d.adminPub == otherAdmin)
+            .firstOrNull;
+        _log('own row is signed by another admin key; asking to trust it');
+        if (!_trustCtl.isClosed) {
+          _trustCtl.add(
+            PendingTrust(
+              adminPub: otherAdmin,
+              adminDeviceName: by?.name ?? '',
+              replacesPinned: true,
             ),
           );
         }

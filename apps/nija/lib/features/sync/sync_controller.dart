@@ -838,11 +838,29 @@ class SyncController extends Notifier<SyncStatus> {
 
   /// Pins [adminPub] for the current group after the user compared the
   /// fingerprint with the admin device.
+  ///
+  /// When it replaces the key pinned before, the versions seen under the
+  /// old key and an admin key of the old one are dropped (the new admin
+  /// numbers rows on its own, and the old key no longer signs anything the
+  /// group accepts), and the group is read again from the start.
   Future<void> trustAdmin(String adminPub) async {
     final s = ref.read(settingsProvider);
-    await ref
-        .read(settingsRepositoryProvider)
-        .saveTrustedAdminPub(s.backendScope, adminPub);
+    final repo = ref.read(settingsRepositoryProvider);
+    final scope = s.backendScope;
+    final pinned = repo.loadTrustedAdminPub(scope);
+    if (pinned != null && pinned != adminPub) {
+      await _serial(_stopEngine);
+      await repo.saveSeenVersions(scope, const {});
+      // Clips skipped while this device could not verify its row are behind
+      // the cursor: read the group again from the start.
+      await ref.read(localStoreProvider).resetCursor();
+      final held = await repo.loadAdminKey(scope);
+      if (held != null && (await AdminKey.decode(held)).publicKey != adminPub) {
+        await repo.saveAdminKey(scope, null);
+      }
+      log.i('trusted a new admin key in place of the old one');
+    }
+    await repo.saveTrustedAdminPub(scope, adminPub);
     ref.read(pendingTrustProvider.notifier).request = null;
     await restart();
   }
