@@ -542,6 +542,9 @@ void main() {
       test('a clip that does not open at the same version re-keys', () async {
         await restartAdminWith({1: 'started over'});
         expect(admin.passphrases.keys, [1], reason: 'rows look in step');
+        await admin.say('sealed with the lost key');
+        await member.engine!.syncNow();
+        expect(member.received, isEmpty);
 
         await member.say('sealed with the old v1');
         await admin.engine!.syncNow();
@@ -555,6 +558,15 @@ void main() {
         await member.say('sealed with v2');
         await admin.engine!.syncNow();
         expect(admin.received, ['sealed with v2']);
+        // The admin's clip from before the re-key went out again under v2.
+        await member.engine!.syncNow();
+        expect(member.received, contains('sealed with the lost key'));
+        expect(
+          shared.items.values
+              .where((i) => i.deviceId == 'A')
+              .map((i) => i.keyVersion),
+          everyElement(2),
+        );
       });
 
       test(
@@ -659,6 +671,18 @@ void main() {
       await rogueC.stop();
       await ex.stop();
     });
+
+    test(
+      'a clip under a key that is still in the envelope is not lost',
+      () async {
+        await admin.engine!.rotatePassphrase('group passphrase v2');
+        // No heartbeat on the member yet: the clip arrives before the key.
+        await admin.say('right after rotation');
+        await member.engine!.syncNow();
+        expect(member.received, contains('right after rotation'));
+        expect(member.passphrases.keys, [1, 2]);
+      },
+    );
 
     test('rotation skips a device whose old signed row was restored', () async {
       final oldRow = atk.row('B');

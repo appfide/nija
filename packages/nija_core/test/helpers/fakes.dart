@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 class FakeLocalStore implements LocalStore {
   final Map<String, ClipItem> items = {};
   final Set<String> unsynced = {};
+  final Set<String> localOnly = {};
   DateTime? cursor;
 
   /// Simulates a local clipboard capture.
@@ -23,6 +24,25 @@ class FakeLocalStore implements LocalStore {
   @override
   Future<void> markSynced(Iterable<String> ids) async =>
       unsynced.removeAll(ids);
+
+  @override
+  Future<void> keepLocal(Iterable<String> ids) async {
+    unsynced.removeAll(ids);
+    localOnly.addAll(ids);
+  }
+
+  @override
+  Future<int> requeueOwn(String deviceId, DateTime now) async {
+    var n = 0;
+    for (final i in items.values.toList()) {
+      if (i.deviceId != deviceId || i.isDeleted || i.isTargeted) continue;
+      if (localOnly.contains(i.id)) continue;
+      items[i.id] = i.copyWith(updatedAt: now);
+      unsynced.add(i.id);
+      n++;
+    }
+    return n;
+  }
 
   @override
   Future<void> applyRemote(List<ClipItem> incoming) async {

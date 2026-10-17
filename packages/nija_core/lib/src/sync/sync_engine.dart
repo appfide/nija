@@ -13,6 +13,7 @@ import 'package:nija_core/src/model/clip_item.dart';
 import 'package:nija_core/src/model/device.dart';
 import 'package:nija_core/src/sync/local_store.dart';
 import 'package:nija_core/src/sync/sync_status.dart';
+import 'package:nija_core/src/sync/timed_backend.dart';
 import 'package:nija_core/src/util/redact.dart';
 
 /// Log sink; the app wires this to its logger. Messages are pre-redacted.
@@ -76,7 +77,7 @@ class SyncEngine {
   /// heartbeat). A missing row then means "removed and forgotten" rather
   /// than "first run".
   SyncEngine({
-    required this._backend,
+    required SyncBackend backend,
     required this._store,
     required this._device,
     this.identity,
@@ -91,12 +92,19 @@ class SyncEngine {
     this.echoWindow = const Duration(seconds: 10),
     this.pushBatchSize = 50,
     this.keyResendDelay = const Duration(seconds: 30),
+    Duration deviceRequestTimeout = const Duration(seconds: 20),
+    Duration dataRequestTimeout = const Duration(minutes: 2),
     this.assumeRegistered = false,
     this._paused = false,
     this.onPausedChanged,
     Map<String, int>? seenMembershipVersions,
     SyncLogger? logger,
-  }) : _ring =
+  }) : _backend = TimedBackend(
+         backend,
+         deviceTimeout: deviceRequestTimeout,
+         dataTimeout: dataRequestTimeout,
+       ),
+       _ring =
            cipherRing ??
            (cipher == null ? null : (CipherRing()..add(1, cipher))),
        _seenVersions = {...?seenMembershipVersions},
@@ -655,10 +663,15 @@ class SyncEngine {
       List<int>.generate(32, (_) => random.nextInt(256)),
     );
     final issued = await _issueKey(version, passphrase);
+    // What we sent under the key nobody else had never opened anywhere;
+    // send it again under the new one. This also unblocks members on 0.5.0,
+    // which stop syncing at the first clip they cannot open.
+    final resent = await _store.requeueOwn(_device.id, now);
     _log(
       '${names.join(', ')} held a different key; issued a fresh key '
-      'v$version to $issued device(s)',
+      'v$version to $issued device(s), sending $resent clip(s) again',
     );
+    if (resent > 0) unawaited(syncNow());
   }
 
   /// Replaces the powers granted to [id]. Signed groups only: in a legacy
@@ -849,7 +862,15 @@ class SyncEngine {
       var rejected = 0;
       // A device that joined since the last heartbeat is not in the trust
       // snapshot yet; refresh once so its first clips are not lost.
-      if (!refreshed && page.any((i) => !_known.contains(i.deviceId))) {
+      // Likewise a clip sealed with a key version newer than ours: its
+      // envelope is waiting in our row, and skipping the clip would lose it.
+      final newest = _ring?.currentVersion ?? 0;
+      if (!refreshed &&
+          page.any(
+            (i) =>
+                !_known.contains(i.deviceId) ||
+                (i.encrypted && _ring != null && i.keyVersion > newest),
+          )) {
         refreshed = true;
         if (!await _membership()) return;
       }
@@ -1166,7 +1187,7 @@ class SyncEngine {
       for (final i in held)
         if (!i.isDeleted && !i.isTargeted) i.id,
     ];
-    await _store.markSynced(local);
+    await _store.keepLocal(local);
     _log(
       'resumed; skipped the paused period, kept ${local.length} clip(s) local',
     );

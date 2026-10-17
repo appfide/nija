@@ -23,6 +23,10 @@ class ClipItems extends Table {
   BoolColumn get pinned => boolean().withDefault(const Constant(false))();
   TextColumn get targetDeviceId => text().nullable()();
 
+  /// Captured while this device kept its copies to itself (database sync
+  /// off, receive-only, paused): never sent, and never sent later.
+  BoolColumn get localOnly => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column<Object>> get primaryKey => {id};
 }
@@ -46,13 +50,16 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.withExecutor(super.e);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
     onUpgrade: (m, from, to) async {
       if (from < 2) {
         await m.addColumn(clipItems, clipItems.targetDeviceId);
+      }
+      if (from < 3) {
+        await m.addColumn(clipItems, clipItems.localOnly);
       }
     },
     onCreate: (m) async {
