@@ -6,6 +6,10 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+- The desktop tray moved to tray_manager 0.8, which drives the icon and menu through one native core on macOS, Windows and Linux. A hot restart no longer leaves a second tray icon behind. On Linux the tray icon is a StatusNotifierItem and no longer needs libayatana-appindicator: the deb now depends on `libx11-6` and `libxi6` instead, and building needs `libx11-dev` and `libxi-dev`.
+- Dependency updates: drift 2.35.2, drift_dev 2.35.1, shared_preferences 2.5.6, url_launcher 6.3.3, pocketbase 0.25.2, test 1.33.0, Gradle 9.8.0, and the pinned GitHub Actions (harden-runner 2.22.1, CodeQL 4.38.3, upload-artifact 7.0.2, download-artifact 8.0.2).
+
 ## [0.5.0] - 2026-10-16
 
 ### Added

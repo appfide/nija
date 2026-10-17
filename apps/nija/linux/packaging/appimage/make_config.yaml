@@ -9,9 +9,5 @@ keywords:
 startup_notify: true
 # Shared libraries bundled into the AppImage so it runs on distros without them.
 include:
-  - libayatana-appindicator3.so.1
-  - libayatana-indicator3.so.7
-  - libdbusmenu-glib.so.4
-  - libdbusmenu-gtk3.so.4
   - libsecret-1.so.0
   - libkeybinder-3.0.so.0
