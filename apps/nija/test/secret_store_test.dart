@@ -15,6 +15,9 @@ class _Keychain extends FlutterSecureStorage {
   bool hang = false;
   bool fail = false;
 
+  /// Like the macOS file keychain: deleting a missing item is an error.
+  bool rejectMissingDelete = false;
+
   Future<T> _op<T>(T Function() run) {
     if (hang) return Completer<T>().future;
     if (fail) throw PlatformException(code: '-34018');
@@ -53,7 +56,12 @@ class _Keychain extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) => _op(() => data.remove(key));
+  }) => _op(() {
+    if (rejectMissingDelete && !data.containsKey(key)) {
+      throw PlatformException(code: '-34018');
+    }
+    data.remove(key);
+  });
 }
 
 void main() {
@@ -74,6 +82,21 @@ void main() {
     await store.write('k', 'v');
     expect(keychain.data['k'], 'v');
     expect(await store.read('k'), 'v');
+    expect(store.degraded.value, isFalse);
+  });
+
+  test('clearing a key the keychain never had is not a failure', () async {
+    keychain.rejectMissingDelete = true;
+    await store.write('k', '');
+    await store.delete('k');
+    expect(await store.read('k'), isNull);
+    expect(store.degraded.value, isFalse);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getStringList('secret_pending_deletes') ?? [], isEmpty);
+
+    await store.write('k', 'v');
+    await store.delete('k');
+    expect(keychain.data, isEmpty);
     expect(store.degraded.value, isFalse);
   });
 

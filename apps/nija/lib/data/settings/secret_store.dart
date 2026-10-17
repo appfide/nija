@@ -93,7 +93,7 @@ class SecretStore {
   /// Deletes a secret from both locations. When the credential store does
   /// not confirm, the delete is retried on later reads.
   Future<void> delete(String key) async {
-    final outcome = await _call(() => _secure.delete(key: key));
+    final outcome = await _deleteSecure(key);
     await _prefs.remove('$_fallbackPrefix$key');
     await _markDeleted(key, pending: outcome != _Outcome.ok);
   }
@@ -110,11 +110,25 @@ class SecretStore {
   }
 
   Future<bool> _retryDelete(String key) async {
-    if (await _call(() => _secure.delete(key: key)) != _Outcome.ok) {
+    if (await _deleteSecure(key) != _Outcome.ok) {
       return false;
     }
     await _markDeleted(key, pending: false);
     return true;
+  }
+
+  /// Deletes [key] from the credential store. A key that is not there counts
+  /// as deleted without a delete call: the macOS file keychain answers a
+  /// delete of a missing item with -34018, because the plugin also deletes
+  /// the iCloud-synchronizable variant, which that keychain does not allow.
+  Future<_Outcome> _deleteSecure(String key) async {
+    var present = true;
+    final probe = await _call(
+      () async => present = await _secure.read(key: key) != null,
+    );
+    if (probe != _Outcome.ok) return probe;
+    if (!present) return _Outcome.ok;
+    return _call(() => _secure.delete(key: key));
   }
 
   Future<_Outcome> _call(Future<void> Function() op) async {
