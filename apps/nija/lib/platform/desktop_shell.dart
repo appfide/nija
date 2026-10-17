@@ -12,7 +12,7 @@ import 'package:window_manager/window_manager.dart';
 /// Tray icon, hide-to-tray window behaviour and the global hotkey.
 ///
 /// No-op on mobile.
-class DesktopShell with TrayListener, WindowListener {
+class DesktopShell with WindowListener {
   /// Creates the shell; call [init] after `runApp`.
   DesktopShell({
     required this.onSyncNow,
@@ -37,20 +37,16 @@ class DesktopShell with TrayListener, WindowListener {
   /// A recent clip picked from the tray menu.
   final Future<void> Function(ClipItem item) onCopyClip;
 
-  static const _menuShow = 'show';
-  static const _menuSync = 'sync';
-  static const _menuPause = 'pause';
-  static const _menuSettings = 'settings';
-  static const _menuQuit = 'quit';
-  static const _menuClip = 'clip:';
-
   /// Longest clip label shown in the tray menu.
   static const recentLabelLength = 40;
 
   bool _initialised = false;
   bool _paused = false;
-  bool _trayReady = false;
   List<ClipItem> _recent = const [];
+  TrayIcon? _tray;
+  Image? _trayImage;
+  ListenerId? _trayListener;
+  _TrayMenu? _trayMenu;
   HotKey? _hotKey;
 
   /// Prepares the window before the first frame. Call in `main()` before
@@ -83,46 +79,88 @@ class DesktopShell with TrayListener, WindowListener {
     windowManager.addListener(this);
 
     try {
-      await trayManager.setIcon(
-        Platform.isWindows ? 'assets/icons/tray.ico' : 'assets/icons/tray.png',
-        isTemplate: Platform.isMacOS,
-      );
-      await trayManager.setToolTip('Nija');
-      await trayManager.setContextMenu(_menu());
-      trayManager.addListener(this);
-      _trayReady = true;
+      _createTray();
     } catch (e) {
       log.w('tray unavailable', error: e);
+      _disposeTray();
     }
 
     await setHotkeyEnabled(enabled: hotkeyEnabled);
   }
 
-  Menu _menu() => Menu(
-    items: [
-      MenuItem(key: _menuShow, label: 'Open Nija'),
-      if (_recent.isNotEmpty) ...[
-        MenuItem.separator(),
-        for (final (i, item) in _recent.indexed)
-          MenuItem(
-            key: '$_menuClip$i',
-            // Windows menus read `&` as a mnemonic marker; `&&` is a literal.
-            label: Platform.isWindows
-                ? recentLabel(item).replaceAll('&', '&&')
-                : recentLabel(item),
-          ),
-        MenuItem.separator(),
-      ],
-      MenuItem(key: _menuSync, label: 'Sync now'),
-      MenuItem(
-        key: _menuPause,
-        label: _paused ? 'Resume capture' : 'Pause capture',
-      ),
-      MenuItem(key: _menuSettings, label: 'Settings…'),
-      MenuItem.separator(),
-      MenuItem(key: _menuQuit, label: 'Quit'),
-    ],
-  );
+  void _createTray() {
+    final tray = TrayIcon.create();
+    if (tray == null) throw StateError('tray icon could not be created');
+    _tray = tray;
+    final image = ImageAsset.fromAsset(
+      Platform.isWindows ? 'assets/icons/tray.ico' : 'assets/icons/tray.png',
+    );
+    if (image == null) throw StateError('tray icon image missing');
+    _trayImage = image;
+    tray
+      ..isIconTemplate = Platform.isMacOS
+      ..icon = image
+      ..setTooltip('Nija')
+      // Left click opens the window, right click the menu. Linux panels
+      // report no clicks and open the menu themselves.
+      ..setContextMenuTrigger(ContextMenuTrigger.rightClicked);
+    _trayListener = tray.addListener((event) {
+      if (event is TrayIconClickedEvent) unawaited(showWindow());
+    });
+    _rebuildMenu();
+    tray.setVisible(true);
+  }
+
+  void _rebuildMenu() {
+    final tray = _tray;
+    if (tray == null) return;
+    final menu = _TrayMenu()..add('Open Nija', () => unawaited(showWindow()));
+    if (_recent.isNotEmpty) {
+      menu.separator();
+      for (final item in _recent) {
+        menu.add(
+          // Windows menus read `&` as a mnemonic marker; `&&` is a literal.
+          Platform.isWindows
+              ? recentLabel(item).replaceAll('&', '&&')
+              : recentLabel(item),
+          () => unawaited(onCopyClip(item)),
+        );
+      }
+      menu.separator();
+    }
+    menu
+      ..add('Sync now', () => unawaited(onSyncNow()))
+      ..add(
+        _paused ? 'Resume capture' : 'Pause capture',
+        () => unawaited(onTogglePause()),
+      )
+      ..add('Settings…', () {
+        unawaited(showWindow());
+        onOpenSettings();
+      })
+      ..separator()
+      ..add('Quit', () => unawaited(onQuit()));
+    tray.setContextMenu(menu.menu);
+    final previous = _trayMenu;
+    _trayMenu = menu;
+    // A rebuild can run inside a menu item's own click callback, so the old
+    // items have to outlive the current event.
+    if (previous != null) Timer.run(previous.dispose);
+  }
+
+  void _disposeTray() {
+    final tray = _tray;
+    final listener = _trayListener;
+    if (tray != null && listener != null) tray.removeListener(listener);
+    tray?.setContextMenu(null);
+    _trayMenu?.dispose();
+    _trayImage?.dispose();
+    tray?.dispose();
+    _tray = null;
+    _trayImage = null;
+    _trayListener = null;
+    _trayMenu = null;
+  }
 
   /// Menu text for [item]: its first line, whitespace collapsed, cut to
   /// [recentLabelLength] characters.
@@ -154,9 +192,8 @@ class DesktopShell with TrayListener, WindowListener {
         ].every((e) => e);
     if (same) return;
     _recent = List.unmodifiable(items);
-    if (!_trayReady) return;
     try {
-      await trayManager.setContextMenu(_menu());
+      _rebuildMenu();
     } catch (e) {
       log.w('tray update failed', error: e);
     }
@@ -166,12 +203,9 @@ class DesktopShell with TrayListener, WindowListener {
   Future<void> setPaused({required bool paused}) async {
     if (!PlatformInfo.isDesktop || _paused == paused) return;
     _paused = paused;
-    if (!_trayReady) return;
     try {
-      await trayManager.setContextMenu(_menu());
-      await trayManager.setToolTip(
-        paused ? 'Nija: capture paused' : 'Nija',
-      );
+      _rebuildMenu();
+      _tray?.setTooltip(paused ? 'Nija: capture paused' : 'Nija');
     } catch (e) {
       log.w('tray update failed', error: e);
     }
@@ -217,51 +251,44 @@ class DesktopShell with TrayListener, WindowListener {
   /// Tears down tray/hotkey (before quitting).
   Future<void> dispose() async {
     if (!_initialised) return;
-    trayManager.removeListener(this);
     windowManager.removeListener(this);
     await hotKeyManager.unregisterAll();
-    await trayManager.destroy();
+    _disposeTray();
     _initialised = false;
   }
 
   @override
   void onWindowClose() => unawaited(hideWindow());
 
-  @override
-  void onTrayIconMouseDown() {
-    if (Platform.isLinux) {
-      unawaited(trayManager.popUpContextMenu());
-    } else {
-      unawaited(showWindow());
-    }
-  }
-
-  @override
-  void onTrayIconRightMouseDown() => unawaited(trayManager.popUpContextMenu());
-
-  @override
-  void onTrayMenuItemClick(MenuItem menuItem) {
-    final key = menuItem.key ?? '';
-    if (key.startsWith(_menuClip)) {
-      final i = int.tryParse(key.substring(_menuClip.length)) ?? -1;
-      if (i >= 0 && i < _recent.length) unawaited(onCopyClip(_recent[i]));
-      return;
-    }
-    switch (key) {
-      case _menuShow:
-        unawaited(showWindow());
-      case _menuSync:
-        unawaited(onSyncNow());
-      case _menuPause:
-        unawaited(onTogglePause());
-      case _menuSettings:
-        unawaited(showWindow());
-        onOpenSettings();
-      case _menuQuit:
-        unawaited(onQuit());
-    }
-  }
-
   /// Whether a hotkey is registered.
   bool get hotkeyActive => _hotKey != null;
+}
+
+/// One tray context menu and the native items it owns.
+class _TrayMenu {
+  _TrayMenu() : menu = Menu.create()!;
+
+  final Menu menu;
+  final List<(MenuItem, ListenerId)> _items = [];
+
+  void add(String label, void Function() onClick) {
+    final item = MenuItem.createWithLabelAndType(label, MenuItemType.normal)!;
+    final id = item.addListener((event) {
+      if (event is MenuItemClickedEvent) onClick();
+    });
+    _items.add((item, id));
+    menu.addItem(item);
+  }
+
+  void separator() => menu.addSeparator();
+
+  void dispose() {
+    for (final (item, id) in _items) {
+      item
+        ..removeListener(id)
+        ..dispose();
+    }
+    _items.clear();
+    menu.dispose();
+  }
 }

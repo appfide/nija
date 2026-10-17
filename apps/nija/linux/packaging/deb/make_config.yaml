@@ -18,6 +18,7 @@ keywords:
 startup_notify: true
 dependencies:
   - libgtk-3-0
-  - libayatana-appindicator3-1
+  - libx11-6
+  - libxi6
   - libsecret-1-0
   - libkeybinder-3.0-0
