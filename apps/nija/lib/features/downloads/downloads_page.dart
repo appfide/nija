@@ -22,6 +22,12 @@ class DownloadsPage extends ConsumerWidget {
   /// Where the fallbacks point when GitHub cannot be reached.
   static const releasesUrl = '${BuildInfo.repoUrl}/releases';
 
+  /// Systems the App Store build covers itself.
+  static const Set<DownloadPlatform> appStorePlatforms = {
+    DownloadPlatform.macos,
+    DownloadPlatform.ios,
+  };
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final release = ref.watch(latestReleaseProvider);
@@ -124,7 +130,14 @@ class _Downloads extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final c = context.colors;
-    final updatable = release.isNewerThan(BuildInfo.version);
+    // The App Store updates this build and already covers Apple devices:
+    // list only the other systems, and never offer a newer copy of itself.
+    const store = BuildInfo.storeBuild;
+    final updatable = !store && release.isNewerThan(BuildInfo.version);
+    final platforms = [
+      for (final p in release.platforms)
+        if (!store || !DownloadsPage.appStorePlatforms.contains(p)) p,
+    ];
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
@@ -173,12 +186,16 @@ class _Downloads extends StatelessWidget {
         ],
         const SizedBox(height: 20),
         Text(
-          'Install it on your other devices: every one of them syncs through '
-          'the same database, so the history follows you.',
+          store
+              ? 'Nija runs on Windows, Linux and Android too. Install it there '
+                    'from GitHub: every device syncs through the same database, '
+                    'so the history follows you.'
+              : 'Install it on your other devices: every one of them syncs '
+                    'through the same database, so the history follows you.',
           style: theme.textTheme.bodyMedium?.copyWith(color: c.muted),
         ),
         const SizedBox(height: 20),
-        for (final platform in release.platforms)
+        for (final platform in platforms)
           SectionCard(
             title: platform.label,
             trailing: platform == _here
@@ -193,6 +210,14 @@ class _Downloads extends StatelessWidget {
                 _AssetRow(asset: asset),
             ],
           ),
+        Center(
+          child: TextButton.icon(
+            key: const ValueKey('downloads-releases'),
+            onPressed: () => DownloadsPage.open(DownloadsPage.releasesUrl),
+            icon: const Icon(Icons.open_in_new_rounded, size: 18),
+            label: const Text('All releases on GitHub'),
+          ),
+        ),
         if (release.checksumsUrl != null)
           Center(
             child: TextButton.icon(

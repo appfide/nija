@@ -14,6 +14,8 @@
 	<string>6.0</string>
 	<!-- Required by the Mac App Store; matches the Productivity
 	     category on the App Store Connect listing. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<true/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>CFBundleName</key>

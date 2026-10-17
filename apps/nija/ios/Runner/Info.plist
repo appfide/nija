@@ -17,7 +17,7 @@
 	<!-- Only standard, exempt cryptography (AES-256-GCM, Argon2id), so every
 	     upload does not have to answer the export questionnaire by hand. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
+	<true/>
 	<key>CFBundleName</key>
 	<string>Nija</string>
 	<key>CFBundlePackageType</key>
