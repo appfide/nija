@@ -66,13 +66,20 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
 
   Future<void> _onAction(Device d, String action) async {
     final controller = ref.read(syncControllerProvider.notifier);
+    // Blocking or removing hands the others a fresh key (see SyncController).
+    final rekeys =
+        ref.read(settingsProvider).encryptionEnabled &&
+        controller.isSignedGroup &&
+        controller.isAdmin;
     switch (action) {
       case 'block':
         final ok = await confirm(
           context,
           title: 'Block ${d.name}?',
           message:
-              'Other devices will ignore its clips. The next time it checks in (about a minute) it stops syncing and forgets the database credentials, so it has to be paired again. To stop it for a while instead, pause it.',
+              'Other devices will ignore its clips. The next time it checks in (about a minute) it stops syncing and forgets the database credentials, so it has to be paired again.'
+              '${rekeys ? ' The other devices get a new encryption key, so it cannot read what is copied from now on.' : ''}'
+              ' To stop it for a while instead, pause it.',
           action: 'Block',
           destructive: true,
         );
@@ -138,16 +145,18 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
           );
         }
       case 'remove':
-        final ok = await confirm(
+        final deleteClips = await confirmRemove(
           context,
-          title: 'Remove ${d.name}?',
-          message:
-              'The device will delete its copy of the database credentials the next time it checks in. Its clips stay in the history. Use Forget afterwards to delete the entry.',
-          action: 'Remove',
-          destructive: true,
+          name: d.name,
+          encrypted: rekeys,
         );
-        if (ok) {
-          await _run(() => controller.removeDevice(d.id), 'Removed ${d.name}');
+        if (deleteClips != null) {
+          await _run(
+            () => controller.removeDevice(d.id, deleteClips: deleteClips),
+            deleteClips
+                ? 'Removed ${d.name} and deleted its clips'
+                : 'Removed ${d.name}',
+          );
         }
       case 'forget':
         final ok =

@@ -741,6 +741,81 @@ void main() {
     });
   });
 
+  group('removing a device', () {
+    late Node other;
+
+    setUp(() async {
+      await setUpSignedGroup();
+      final keys = await DeviceKeys.generate();
+      other = await Node.create(shared, 'C', 'Tablet', keys: keys);
+      await admin.engine!.inviteDevice(
+        id: 'C',
+        role: DeviceRole.full,
+        signPub: keys.signPub,
+        boxPub: keys.boxPub,
+        passphrase: pass1,
+      );
+      await other.start(trustedAdminPub: adminKey.publicKey);
+    });
+    tearDown(() async {
+      await admin.stop();
+      await member.stop();
+      await other.stop();
+    });
+
+    test(
+      'its clips can be deleted from the database and every device',
+      () async {
+        await member.say('from the phone');
+        await other.engine!.syncNow();
+        await admin.engine!.syncNow();
+        expect(other.received, contains('from the phone'));
+
+        await admin.engine!.removeDevice('B');
+        final n = await admin.engine!.purgeDeviceClips('B');
+        expect(n, 1);
+        expect(admin.received, isNot(contains('from the phone')));
+        final row = shared.items.values.single;
+        expect(row.isDeleted, isTrue);
+        expect(row.content, isEmpty, reason: 'the ciphertext is gone too');
+
+        await other.engine!.refreshDevices();
+        await other.engine!.syncNow();
+        expect(other.received, isNot(contains('from the phone')));
+      },
+    );
+
+    test('a deletion not signed by the admin is ignored', () async {
+      await member.say('keep me');
+      await other.engine!.syncNow();
+      await admin.engine!.removeDevice('B');
+      await other.engine!.refreshDevices();
+
+      // A member, not the admin, signs the deletion.
+      final row = shared.items.values.single;
+      atk.inject(
+        await ClipSigning.signItem(
+          row.tombstone(DateTime.now().toUtc()),
+          other.keys,
+        ),
+      );
+      await other.engine!.syncNow();
+      expect(other.received, contains('keep me'));
+    });
+
+    test('a device unblocked after a rotation gets the new key', () async {
+      await admin.engine!.blockDevice('B');
+      await admin.engine!.rotatePassphrase('after the block');
+      await admin.engine!.unblockDevice('B');
+      await admin.engine!.sendKeyTo('B', 2, 'after the block');
+      await admin.say('new key era');
+      await member.engine!.refreshDevices();
+      await member.engine!.syncNow();
+      expect(member.passphrases[2], 'after the block');
+      expect(member.received, contains('new key era'));
+    });
+  });
+
   group('admin key replaced', () {
     setUp(setUpSignedGroup);
     tearDown(() async {

@@ -491,3 +491,61 @@ Future<bool> confirm(
   );
   return ok ?? false;
 }
+
+/// Asks before removing [name]. Returns `null` when cancelled, otherwise
+/// whether its clips should be deleted from the database and every device.
+Future<bool?> confirmRemove(
+  BuildContext context, {
+  required String name,
+  required bool encrypted,
+}) async {
+  final scheme = Theme.of(context).colorScheme;
+  var deleteClips = false;
+  return showDialog<bool>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        key: const ValueKey('remove-dialog'),
+        title: Text('Remove $name?'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'The device deletes its copy of the database credentials the next time it checks in.'
+                '${encrypted ? ' The other devices get a new encryption key, so it cannot read what is copied from now on.' : ''}'
+                ' Use Forget afterwards to delete the entry.',
+              ),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                key: const ValueKey('remove-delete-clips'),
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                value: deleteClips,
+                onChanged: (v) => setState(() => deleteClips = v ?? false),
+                title: const Text('Also delete its clips'),
+                subtitle: const Text(
+                  'From the database and from every other device. What the removed device already holds stays on it.',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('remove-confirm'),
+            style: FilledButton.styleFrom(backgroundColor: scheme.error),
+            onPressed: () => Navigator.pop(ctx, deleteClips),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    ),
+  );
+}

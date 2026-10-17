@@ -208,9 +208,8 @@ void main() {
     await ex.sync.syncNow();
     expect(await _history(ex), containsAll(['from host', 'from phone']));
 
+    // Removing hands the remaining devices a fresh key on its own.
     await host.sync.removeDevice(exSession.deviceId);
-    final v2 = await host.sync.rotatePassphrase();
-    expect(v2, 2);
     expect(host.status.keyVersion, 2);
     await joiner.sync.refreshDevices();
     final ringJ = await repoJ.loadKeyring();
@@ -292,6 +291,60 @@ void main() {
     await joiner.dispose();
     await host.dispose();
   });
+
+  test(
+    'removing a device can delete its clips and re-keys the group',
+    () async {
+      final shared = MemoryStore();
+      final host = await _boot(
+        _host.copyWith(encryptionEnabled: false),
+        shared,
+      );
+      await host.sync.start();
+      await host.sync.secureNewGroup();
+      Future<_Node> join(String id) async {
+        final session = await host.sync.createPairing(
+          role: DeviceRole.full,
+          includePassphrase: true,
+        );
+        final n = await _boot(
+          AppSettings(deviceId: id, deviceName: id, onboarded: true),
+          shared,
+        );
+        await n.sync.start();
+        await n.sync.joinFromPairing(
+          await PairingCodec.open(session.code, session.pin),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        return n;
+      }
+
+      final phone = await join('phone');
+      final tablet = await join('tablet');
+      final phoneId = phone.c.read(settingsProvider).deviceId;
+      await phone.c
+          .read(localStoreProvider)
+          .capture(_clip('copied on the phone', device: phoneId));
+      await phone.sync.syncNow();
+      await tablet.sync.syncNow();
+      await host.sync.syncNow();
+      expect(await _history(tablet), contains('copied on the phone'));
+      final before = host.status.keyVersion;
+
+      await host.sync.removeDevice(phoneId, deleteClips: true);
+      expect(host.status.keyVersion, before + 1);
+      expect(await _history(host), isNot(contains('copied on the phone')));
+
+      await tablet.sync.refreshDevices();
+      await tablet.sync.syncNow();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(await _history(tablet), isNot(contains('copied on the phone')));
+      expect(tablet.status.keyVersion, before + 1);
+      await phone.dispose();
+      await tablet.dispose();
+      await host.dispose();
+    },
+  );
 
   test('trusting an admin that started over brings a member back', () async {
     final shared = MemoryStore();

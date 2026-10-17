@@ -365,6 +365,76 @@ class SyncEngine {
   Future<void> removeDevice(String id) =>
       _patch(id, (d) => d.copyWith(status: DeviceStatus.removed));
 
+  /// Admin only: deletes every clip [id] wrote, from the database and from
+  /// this device, and returns how many. Each deletion carries this device's
+  /// signature instead of the author's, which other devices accept only for
+  /// a device that is no longer a trusted member and only from a trusted
+  /// admin. Call it after [removeDevice] or [blockDevice].
+  Future<int> purgeDeviceClips(String id) async {
+    _requireAdminIfSigned();
+    final keys = identity;
+    if (adminKey == null || keys == null) {
+      throw StateError('Only the admin of a signed group can delete its clips');
+    }
+    if (id == _device.id) {
+      throw StateError('Use Delete history for this device');
+    }
+    final now = clock.now().toUtc();
+    final gone = <ClipItem>[];
+    DateTime? cursor;
+    while (true) {
+      final page = await _backend.pullSince(
+        cursor,
+        excludeDeviceId: _device.id,
+        limit: pushBatchSize,
+      );
+      if (page.isEmpty) break;
+      for (final row in page) {
+        if (row.deviceId != id || row.isDeleted) continue;
+        gone.add(
+          await ClipSigning.signItem(
+            row.tombstone(now).copyWith(clearNonce: true),
+            keys,
+          ),
+        );
+      }
+      final last = page
+          .map((i) => i.updatedAt)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+      if (page.length < pushBatchSize ||
+          (cursor != null && !last.isAfter(cursor))) {
+        break;
+      }
+      cursor = last;
+    }
+    for (var i = 0; i < gone.length; i += pushBatchSize) {
+      final end = (i + pushBatchSize).clamp(0, gone.length);
+      await _backend.upsert(gone.sublist(i, end));
+    }
+    if (gone.isNotEmpty) await _store.applyRemote(gone);
+    _log('deleted ${gone.length} clip(s) of $id');
+    return gone.length;
+  }
+
+  /// Admin only: seals [passphrase] as [version] to [id] alone, for a device
+  /// that was away (blocked) while the key changed.
+  Future<void> sendKeyTo(String id, int version, String passphrase) async {
+    _requireAdminIfSigned();
+    if (adminKey == null) throw StateError('Only the admin can send keys');
+    final d = await _deviceRow(id);
+    final box = d.boxPub;
+    if (box == null || d.keyVersion >= version) return;
+    final env = await KeyEnvelope.seal(
+      passphrase: passphrase,
+      version: version,
+      recipientBoxPub: box,
+    );
+    await _backend.updateDevice(
+      await _signed(d.copyWith(keyVersion: version, keyEnvelope: env.encode())),
+    );
+    await _membership();
+  }
+
   /// Changes what [id] may do.
   Future<void> setDeviceRole(String id, DeviceRole role) =>
       _patch(id, (d) => d.copyWith(role: role));
@@ -905,6 +975,13 @@ class SyncEngine {
           continue; // addressed to another device
         }
         final sender = _trusted[raw.deviceId];
+        if (raw.isDeleted && await _deletedByAdmin(raw)) {
+          // The admin cleared the clips of a device it removed. This may
+          // arrive before the removal itself does, so the author's standing
+          // does not matter: the admin may remove it anyway.
+          accepted.add(raw);
+          continue;
+        }
         if (sender == null) {
           // Signed group: only verified members may speak. Legacy group:
           // a device that is blocked / expired / removed is ignored, an
@@ -988,6 +1065,17 @@ class SyncEngine {
       );
       if (page.length < 500) return;
     }
+  }
+
+  /// Whether a trusted admin signed the deletion [item].
+  Future<bool> _deletedByAdmin(ClipItem item) async {
+    if (!isSignedGroup) return false;
+    for (final d in _trusted.values) {
+      final pub = d.signPub;
+      if (!d.admin || pub == null) continue;
+      if (await ClipSigning.verifyItem(item, pub)) return true;
+    }
+    return false;
   }
 
   /// Signature policy for one incoming item from a trusted [sender].

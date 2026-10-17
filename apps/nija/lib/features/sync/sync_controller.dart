@@ -535,13 +535,43 @@ class SyncController extends Notifier<SyncStatus> {
   Future<List<Device>> refreshDevices() => _managed.refreshDevices();
 
   /// See [SyncEngine.blockDevice].
-  Future<void> blockDevice(String id) => _managed.blockDevice(id);
+  ///
+  /// The admin of an encrypted group then hands the others a fresh key, so
+  /// the blocked device cannot read what is copied from now on even if it
+  /// kept the database credentials.
+  Future<void> blockDevice(String id) async {
+    await _managed.blockDevice(id);
+    await _rotateAfterRevoking();
+  }
 
-  /// See [SyncEngine.unblockDevice].
-  Future<void> unblockDevice(String id) => _managed.unblockDevice(id);
+  /// See [SyncEngine.unblockDevice]. The device also gets the current key,
+  /// which may have changed while it was blocked.
+  Future<void> unblockDevice(String id) async {
+    await _managed.unblockDevice(id);
+    if (!ref.read(settingsProvider).encryptionEnabled || !isAdmin) return;
+    final ring = await ref.read(settingsRepositoryProvider).loadKeyring();
+    if (ring.isEmpty) return;
+    final v = ring.keys.reduce(max);
+    await _managed.sendKeyTo(id, v, ring[v]!);
+  }
 
   /// See [SyncEngine.removeDevice].
-  Future<void> removeDevice(String id) => _managed.removeDevice(id);
+  ///
+  /// With [deleteClips] the admin also deletes every clip the device wrote,
+  /// from the database and from every other device. In an encrypted group
+  /// the remaining devices get a fresh key, as with [blockDevice].
+  Future<void> removeDevice(String id, {bool deleteClips = false}) async {
+    await _managed.removeDevice(id);
+    if (deleteClips) await _managed.purgeDeviceClips(id);
+    await _rotateAfterRevoking();
+  }
+
+  Future<void> _rotateAfterRevoking() async {
+    if (!ref.read(settingsProvider).encryptionEnabled) return;
+    if (!isSignedGroup || !isAdmin) return;
+    final v = await rotatePassphrase();
+    log.i('issued key v$v to the remaining devices');
+  }
 
   /// See [SyncEngine.forgetDevice].
   Future<void> forgetDevice(String id) => _managed.forgetDevice(id);
