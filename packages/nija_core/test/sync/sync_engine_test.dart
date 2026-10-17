@@ -801,4 +801,68 @@ void _membershipTests() {
     backend.failWith = null;
     await e.dispose();
   });
+
+  test('a request that never answers does not freeze sync', () async {
+    final shared = MemoryStore();
+    final storeA = FakeLocalStore();
+    final hanging = _HangingBackend(shared);
+    await hanging.connect(const BackendConfig.empty('memory'));
+    final e = SyncEngine(
+      backend: hanging,
+      store: storeA,
+      device: deviceA,
+      pollInterval: const Duration(hours: 1),
+      heartbeatInterval: const Duration(hours: 1),
+      deviceRequestTimeout: const Duration(milliseconds: 50),
+      dataRequestTimeout: const Duration(milliseconds: 50),
+    );
+    hanging.hang = true;
+    await e.start().timeout(const Duration(seconds: 5));
+    expect(e.isRunning, isTrue);
+    expect(e.status.phase, SyncPhase.error);
+
+    // The network comes back: the next run goes through.
+    hanging.hang = false;
+    storeA.capture(textItem('after the hang'));
+    await e.syncNow();
+    expect(shared.items.values.map((i) => i.content), ['after the hang']);
+    expect(shared.devices.keys, contains('dev-a'));
+    await e.dispose();
+    await hanging.dispose();
+  });
+}
+
+/// Every request waits forever while [hang] is set, like a socket that went
+/// away without closing.
+class _HangingBackend extends MemoryBackend {
+  _HangingBackend(MemoryStore shared) : super(shared: shared);
+
+  bool hang = false;
+
+  Future<T> _maybe<T>(Future<T> Function() op) =>
+      hang ? Completer<T>().future : op();
+
+  @override
+  Future<List<Device>> listDevices() => _maybe(super.listDevices);
+
+  @override
+  Future<void> registerDevice(Device device) =>
+      _maybe(() => super.registerDevice(device));
+
+  @override
+  Future<void> upsert(List<ClipItem> items) =>
+      _maybe(() => super.upsert(items));
+
+  @override
+  Future<List<ClipItem>> pullSince(
+    DateTime? cursor, {
+    required String excludeDeviceId,
+    int limit = 500,
+  }) => _maybe(
+    () => super.pullSince(
+      cursor,
+      excludeDeviceId: excludeDeviceId,
+      limit: limit,
+    ),
+  );
 }

@@ -170,6 +170,12 @@ class SyncController extends Notifier<SyncStatus> {
                 ?.setPaused(paused: next.capturePaused),
           );
         }
+        if (prev.backendScope != next.backendScope) {
+          // Another database: start reading it from the beginning, and stop
+          // calling what is already here "in the database". Queued ahead of
+          // the restart below, so the new engine sees both.
+          unawaited(_serial(_onDatabaseChanged));
+        }
         // Only a running engine needs restarting; before start() the seeded
         // secrets simply become part of the initial configuration.
         final toggled = prev.remoteSyncEnabled != next.remoteSyncEnabled;
@@ -180,6 +186,13 @@ class SyncController extends Notifier<SyncStatus> {
       })
       ..onDispose(() => unawaited(_teardown()));
     return const SyncStatus.stopped();
+  }
+
+  Future<void> _onDatabaseChanged() async {
+    final store = ref.read(localStoreProvider);
+    await store.resetCursor();
+    final kept = await store.keepAllLocal();
+    log.i('database changed; $kept clip(s) here are not in the new one');
   }
 
   /// Backend currently connected (for settings screens).
@@ -236,8 +249,10 @@ class SyncController extends Notifier<SyncStatus> {
   Future<void> start() async {
     final s = ref.read(settingsProvider);
     // Engine first: a clipboard permission prompt on mobile must never
-    // delay connecting to the backend.
-    await _serial(() => _startEngine(s));
+    // delay connecting to the backend. Capture does not wait for it either:
+    // a database that is slow or unreachable at launch must not stop the
+    // history from being recorded. Clips wait in the outbox meanwhile.
+    final engineStarted = _serial(() => _startEngine(s));
     if (_clipboard == null) {
       final c = ClipboardService(
         deviceId: s.deviceId,
@@ -253,6 +268,7 @@ class SyncController extends Notifier<SyncStatus> {
       _clipboard = c;
       await c.start();
     }
+    await engineStarted;
   }
 
   Future<void> _onCaptured(ClipItem item) async {
@@ -824,14 +840,13 @@ class SyncController extends Notifier<SyncStatus> {
     await restart();
   }
 
-  /// Issues a fresh random passphrase to every verified active device.
-  /// Returns the new version.
-  Future<int> rotatePassphrase() async {
+  /// Issues a new passphrase, [passphrase] or a random one, to every
+  /// verified active device. Returns the new version.
+  Future<int> rotatePassphrase({String? passphrase}) async {
     final s = ref.read(settingsProvider);
     if (!s.encryptionEnabled) throw StateError('Encryption is off');
     final bytes = List<int>.generate(32, (_) => Random.secure().nextInt(256));
-    final passphrase = base64UrlEncode(bytes);
-    await _managed.rotatePassphrase(passphrase);
+    await _managed.rotatePassphrase(passphrase ?? base64UrlEncode(bytes));
     return _managed.status.keyVersion;
   }
 

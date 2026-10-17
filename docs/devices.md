@@ -181,7 +181,11 @@ credentials instead.
 - **Passphrases travel in envelopes**, sealed to each device's X25519 key
   and covered by the admin signature. *Rotate encryption key* issues a fresh
   random passphrase to every verified active or paused device; a removed or blocked
-  device gets nothing and cannot read clips sealed with the new key.
+  device gets nothing and cannot read clips sealed with the new key. The
+  admin device does the same on its own when a member turns out to hold a
+  different key (its row carries a newer key version than the admin has, or
+  its clips at the admin's version do not open), so devices never have to
+  compare fingerprints to get back in step.
 
 With that in place, someone who has the database credentials but not the
 admin key can still *read the database* (ciphertext only, when encryption is

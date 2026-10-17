@@ -51,6 +51,36 @@
    then signed with the device's Ed25519 key; every pulled item is verified
    against the sender's admin-signed public key before decryption. Threat
    model and limits: [devices.md](devices.md#how-access-is-enforced--read-this).
+8. **Deadlines**: the engine wraps the backend in `TimedBackend`, so every
+   request fails as a transient error after 20 seconds (device rows) or
+   2 minutes (clips) instead of waiting forever on a dead connection.
+   Clipboard capture never waits for the engine to connect.
+
+## One database at a time
+
+A device syncs with exactly one database: the one selected in *Settings →
+Database*. Credentials for others you set up before stay saved, so switching
+back does not mean typing them again, but nothing is read from or sent to a
+database that is not selected. A database is identified by its type and its
+address (`backendScope`, such as `supabase|https://<ref>.supabase.co`), so
+two Supabase projects are two databases.
+
+Switching to another database:
+
+- starts reading the new one from the beginning (the read position is reset);
+- marks the history already on the device *Only on this device*
+  (`local_only`): none of it is in the new database and none of it is sent
+  there, so a new database never receives old history unasked. Clips the new
+  database already holds turn back to *In &lt;database&gt;* when pulled;
+- keeps the admin key and pinned admin per database, so a signed group on
+  one does not carry over to the other. The encryption keyring belongs to
+  the device, not the database: joining the new group by pairing replaces
+  it, and typing credentials by hand keeps the passphrase you enter.
+
+Each history row shows which of the three states a clip is in: *In
+&lt;database&gt;* (`synced`), *Waiting to sync* (in the outbox) or *Only on
+this device* (`local_only`: copied while database sync was off, the device
+was paused or receive-only, or before a switch).
 
 ## Adding a backend
 

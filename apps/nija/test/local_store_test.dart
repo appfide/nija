@@ -224,7 +224,84 @@ void _deviceFeatures() {
     },
   );
 
-  test('schema v1 database upgrades to v2 keeping rows', () async {
+  group('sync state', () {
+    Future<Map<String, ClipSyncState>> states() async => {
+      for (final e in await store.watchHistory().first)
+        e.item.content: e.syncState,
+    };
+
+    test('sent, waiting and kept-local clips read apart', () async {
+      final t = DateTime.utc(2026, 10, 17, 12);
+      await store.capture(_item('sent', at: t));
+      await store.capture(
+        _item('waiting', at: t.add(const Duration(seconds: 1))),
+      );
+      await store.capture(
+        _item('local', at: t.add(const Duration(seconds: 2))),
+        localOnly: true,
+      );
+      await store.applyRemote([
+        _item('theirs', device: 'phone', at: t.add(const Duration(seconds: 3))),
+      ]);
+      final sent = (await store.pendingOutbox()).firstWhere(
+        (i) => i.content == 'sent',
+      );
+      await store.markSynced([sent.id]);
+      expect(await states(), {
+        'sent': ClipSyncState.inDatabase,
+        'waiting': ClipSyncState.pending,
+        'local': ClipSyncState.localOnly,
+        'theirs': ClipSyncState.inDatabase,
+      });
+    });
+
+    test(
+      'requeueing sends own clips again but never kept-local ones',
+      () async {
+        final t = DateTime.utc(2026, 10, 17, 12);
+        await store.capture(_item('mine', at: t));
+        await store.capture(
+          _item('private', at: t.add(const Duration(seconds: 1))),
+          localOnly: true,
+        );
+        await store.applyRemote([
+          _item(
+            'theirs',
+            device: 'phone',
+            at: t.add(const Duration(seconds: 2)),
+          ),
+        ]);
+        await store.markSynced((await store.pendingOutbox()).map((i) => i.id));
+        final later = t.add(const Duration(hours: 1));
+        expect(await store.requeueOwn('me', later), 1);
+        final out = await store.pendingOutbox();
+        expect(out.map((i) => i.content), ['mine']);
+        expect(out.single.updatedAt, later);
+      },
+    );
+
+    test('a clip held back during a pause stays local', () async {
+      await store.capture(_item('held'));
+      await store.keepLocal((await store.pendingOutbox()).map((i) => i.id));
+      expect(await store.pendingOutbox(), isEmpty);
+      expect(await states(), {'held': ClipSyncState.localOnly});
+      expect(await store.requeueOwn('me', DateTime.now().toUtc()), 0);
+    });
+
+    test('switching databases keeps the history out of the new one', () async {
+      final t = DateTime.utc(2026, 10, 17, 12);
+      await store.capture(_item('old db', at: t));
+      await store.capture(
+        _item('unsent', at: t.add(const Duration(seconds: 1))),
+      );
+      await store.markSynced([(await store.pendingOutbox()).first.id]);
+      expect(await store.keepAllLocal(), 2);
+      expect(await store.pendingOutbox(), isEmpty);
+      expect((await states()).values, everyElement(ClipSyncState.localOnly));
+    });
+  });
+
+  test('schema v1 database upgrades to the current schema keeping rows', () async {
     final raw = sqlite3.openInMemory()
       ..execute('''
       CREATE TABLE clip_items (
@@ -248,7 +325,8 @@ void _deviceFeatures() {
     expect(rows.single.id, 'old');
     expect(rows.single.content, 'kept');
     expect(rows.single.targetDeviceId, isNull);
-    expect(raw.userVersion, 2);
+    expect(rows.single.localOnly, isFalse);
+    expect(raw.userVersion, 3);
     await DriftLocalStore(upgraded).enqueue(
       ClipItem.create(
         id: 'new',

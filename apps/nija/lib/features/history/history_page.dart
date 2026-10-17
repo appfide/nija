@@ -12,6 +12,7 @@ import 'package:nija/features/devices/device_picker.dart';
 import 'package:nija/features/history/clip_preview.dart';
 import 'package:nija/features/history/clip_text.dart';
 import 'package:nija/features/history/history_keys.dart';
+import 'package:nija/features/history/sync_marker.dart';
 import 'package:nija/features/sync/sync_controller.dart';
 import 'package:nija/providers.dart';
 import 'package:nija/ui/app_theme.dart';
@@ -107,10 +108,14 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
       );
   }
 
-  Future<void> _preview(ClipItem item) => showClipPreview(
+  Future<void> _preview(HistoryEntry entry) => showClipPreview(
     context,
-    item: item,
-    onCopy: () => _copy(item),
+    item: entry.item,
+    syncState: ref.read(settingsProvider).syncsRemotely
+        ? entry.syncState
+        : null,
+    database: databaseName(ref, listen: false),
+    onCopy: () => _copy(entry.item),
     onCopyText: _copyText,
   );
 
@@ -140,7 +145,7 @@ class _HistoryPageState extends ConsumerState<HistoryPage> {
         if (t != null) unawaited(_copy(t.item));
       case HistoryKeyAction.preview:
         final t = target();
-        if (t != null) unawaited(_preview(t.item));
+        if (t != null) unawaited(_preview(t));
       case HistoryKeyAction.pin:
         final t = target();
         if (t != null) {
@@ -390,7 +395,7 @@ class _GroupedList extends StatelessWidget {
   final int? selected;
   final GlobalKey selectedKey;
   final Future<void> Function(ClipItem) onCopy;
-  final Future<void> Function(ClipItem) onPreview;
+  final Future<void> Function(HistoryEntry) onPreview;
 
   @override
   Widget build(BuildContext context) {
@@ -430,7 +435,7 @@ class _GroupedList extends StatelessWidget {
             query: query,
             selected: isSelected,
             onCopy: () => onCopy(entry.item),
-            onPreview: () => onPreview(entry.item),
+            onPreview: () => onPreview(entry),
           ),
         );
       },
@@ -482,6 +487,7 @@ class _ClipCardState extends ConsumerState<_ClipCard> {
     final store = ref.read(localStoreProvider);
     final ownId = ref.watch(settingsProvider.select((s) => s.deviceId));
     final remote = ref.watch(settingsProvider.select((s) => s.syncsRemotely));
+    final database = databaseName(ref);
     // Only the device that captured a clip may delete it from the group.
     final deleteLabel = !remote
         ? 'Delete'
@@ -585,13 +591,9 @@ class _ClipCardState extends ConsumerState<_ClipCard> {
                           '  ·  ${_ago(item.createdAt)}',
                           style: theme.textTheme.bodySmall,
                         ),
-                        if (!entry.synced) ...[
+                        if (remote) ...[
                           const SizedBox(width: 8),
-                          Icon(
-                            Icons.cloud_upload_outlined,
-                            size: 14,
-                            color: c.warning,
-                          ),
+                          SyncMarker(entry.syncState, database: database),
                         ],
                         if (item.encrypted) ...[
                           const SizedBox(width: 6),

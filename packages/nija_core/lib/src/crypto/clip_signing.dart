@@ -33,9 +33,25 @@ abstract final class ClipSigning {
     }),
   );
 
-  /// Signs [item] with [keys].
-  static Future<ClipItem> signItem(ClipItem item, DeviceKeys keys) async =>
-      item.copyWith(sig: await keys.sign(itemBytes(item)));
+  /// [t] at millisecond precision. PocketBase and MongoDB keep only
+  /// milliseconds, so a signature over microseconds never verifies once
+  /// the row comes back from them. Every signed time is cut to that first.
+  static DateTime _ms(DateTime t) => DateTime.fromMillisecondsSinceEpoch(
+    t.millisecondsSinceEpoch,
+    isUtc: true,
+  );
+
+  /// Signs [item] with [keys]. Returns the item as it must be stored: its
+  /// times at millisecond precision, with the signature.
+  static Future<ClipItem> signItem(ClipItem item, DeviceKeys keys) async {
+    final deleted = item.deletedAt;
+    final i = item.copyWith(
+      createdAt: _ms(item.createdAt),
+      updatedAt: _ms(item.updatedAt),
+      deletedAt: deleted == null ? null : _ms(deleted),
+    );
+    return i.copyWith(sig: await keys.sign(itemBytes(i)));
+  }
 
   /// Verifies [item]'s signature against [signPub] (base64).
   static Future<bool> verifyItem(ClipItem item, String signPub) async {
@@ -75,7 +91,9 @@ abstract final class ClipSigning {
 
   /// Bumps the version, stamps [admin]'s public key and signs [device].
   static Future<Device> signMembership(Device device, AdminKey admin) async {
+    final expires = device.expiresAt;
     final d = device.copyWith(
+      expiresAt: expires == null ? null : _ms(expires),
       adminPub: admin.publicKey,
       membershipVersion: device.membershipVersion + 1,
     );

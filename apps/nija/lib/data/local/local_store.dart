@@ -26,6 +26,40 @@ class DriftLocalStore implements LocalStore {
   }
 
   @override
+  Future<int> requeueOwn(String deviceId, DateTime now) =>
+      (db.update(db.clipItems)..where(
+            (t) =>
+                t.deviceId.equals(deviceId) &
+                t.deletedAt.isNull() &
+                t.targetDeviceId.isNull() &
+                t.localOnly.equals(false),
+          ))
+          .write(
+            ClipItemsCompanion(
+              synced: const Value(false),
+              updatedAt: Value(now.toUtc()),
+            ),
+          );
+
+  /// Marks the whole history as kept on this device, for a switch to
+  /// another database: none of it is there, and none of it is sent. Clips
+  /// the new database already holds turn back to synced when pulled.
+  /// Returns how many rows changed.
+  Future<int> keepAllLocal() =>
+      (db.update(db.clipItems)..where((t) => t.localOnly.equals(false))).write(
+        const ClipItemsCompanion(synced: Value(true), localOnly: Value(true)),
+      );
+
+  @override
+  Future<void> keepLocal(Iterable<String> ids) async {
+    final list = ids.toList();
+    if (list.isEmpty) return;
+    await (db.update(db.clipItems)..where((t) => t.id.isIn(list))).write(
+      const ClipItemsCompanion(synced: Value(true), localOnly: Value(true)),
+    );
+  }
+
+  @override
   Future<void> markSynced(Iterable<String> ids) async {
     final list = ids.toList();
     if (list.isEmpty) return;
@@ -112,7 +146,14 @@ class DriftLocalStore implements LocalStore {
     if (top != null && top.contentHash == item.contentHash) return false;
     await db
         .into(db.clipItems)
-        .insert(_toCompanion(item, synced: localOnly, pinned: false));
+        .insert(
+          _toCompanion(
+            item,
+            synced: localOnly,
+            pinned: false,
+            localOnly: localOnly,
+          ),
+        );
     return true;
   }
 
@@ -162,7 +203,12 @@ class DriftLocalStore implements LocalStore {
     return q.watch().map(
       (rows) => rows
           .map(
-            (r) => HistoryEntry(_toItem(r), pinned: r.pinned, synced: r.synced),
+            (r) => HistoryEntry(
+              _toItem(r),
+              pinned: r.pinned,
+              synced: r.synced,
+              localOnly: r.localOnly,
+            ),
           )
           .toList(),
     );
@@ -269,7 +315,9 @@ class DriftLocalStore implements LocalStore {
     ClipItem i, {
     required bool synced,
     required bool pinned,
+    bool localOnly = false,
   }) => ClipItemsCompanion(
+    localOnly: Value(localOnly),
     id: Value(i.id),
     deviceId: Value(i.deviceId),
     deviceName: Value(i.deviceName),
@@ -318,7 +366,12 @@ enum HistoryFilter {
 /// A history row with local-only flags.
 class HistoryEntry {
   /// Creates an entry.
-  const HistoryEntry(this.item, {required this.pinned, required this.synced});
+  const HistoryEntry(
+    this.item, {
+    required this.pinned,
+    required this.synced,
+    this.localOnly = false,
+  });
 
   /// The clip.
   final ClipItem item;
@@ -326,6 +379,28 @@ class HistoryEntry {
   /// Pinned locally.
   final bool pinned;
 
-  /// Pushed to the backend.
+  /// Pushed to the backend, or received from it.
   final bool synced;
+
+  /// Kept on this device on purpose; never sent.
+  final bool localOnly;
+
+  /// Where this clip lives, for the history's sync marker.
+  ClipSyncState get syncState => localOnly
+      ? ClipSyncState.localOnly
+      : synced
+      ? ClipSyncState.inDatabase
+      : ClipSyncState.pending;
+}
+
+/// Whether a clip reached the connected database.
+enum ClipSyncState {
+  /// In the database: sent from here or received from another device.
+  inDatabase,
+
+  /// Waiting in the outbox.
+  pending,
+
+  /// Kept on this device; never sent.
+  localOnly,
 }

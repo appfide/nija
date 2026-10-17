@@ -14,6 +14,16 @@ abstract class LocalStore {
   /// Marks [ids] as pushed.
   Future<void> markSynced(Iterable<String> ids);
 
+  /// Takes [ids] out of the outbox for good: they stay on this device and
+  /// [requeueOwn] never sends them.
+  Future<void> keepLocal(Iterable<String> ids);
+
+  /// Puts every live clip [deviceId] copied (not the copies it sent to one
+  /// device) back in the outbox with `updated_at` = [now], so the next push
+  /// seals it again with the current key and every device pulls it again.
+  /// Returns how many.
+  Future<int> requeueOwn(String deviceId, DateTime now);
+
   /// Applies items received from the backend. Must be last-writer-wins on
   /// `updated_at` and must set `synced = true` for these rows.
   Future<void> applyRemote(List<ClipItem> items);

@@ -2,7 +2,9 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:nija/data/local/local_store.dart';
 import 'package:nija/features/history/clip_text.dart';
+import 'package:nija/features/history/sync_marker.dart';
 import 'package:nija/ui/app_theme.dart';
 import 'package:nija_core/nija_core.dart';
 
@@ -15,9 +17,13 @@ Future<void> showClipPreview(
   required ClipItem item,
   required Future<void> Function() onCopy,
   required Future<void> Function(String text) onCopyText,
+  ClipSyncState? syncState,
+  String database = 'the database',
 }) {
   final body = _PreviewBody(
     item: item,
+    syncState: syncState,
+    database: database,
     onCopy: onCopy,
     onCopyText: onCopyText,
   );
@@ -51,9 +57,15 @@ class _PreviewBody extends StatelessWidget {
     required this.item,
     required this.onCopy,
     required this.onCopyText,
+    this.syncState,
+    this.database = 'the database',
   });
 
   final ClipItem item;
+
+  /// Where the clip is; `null` when this device syncs with no database.
+  final ClipSyncState? syncState;
+  final String database;
   final Future<void> Function() onCopy;
   final Future<void> Function(String text) onCopyText;
 
@@ -95,6 +107,21 @@ class _PreviewBody extends StatelessWidget {
             style: theme.textTheme.bodySmall,
           ),
         ),
+        if (syncState case final state?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+            child: Row(
+              children: [
+                SyncMarker(state, database: database),
+                const SizedBox(width: 6),
+                Text(
+                  syncStateLabel(state, database),
+                  key: const ValueKey('clip-preview-sync'),
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
         if (color != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),

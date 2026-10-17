@@ -53,7 +53,11 @@ void main() {
   late AppDatabase db;
   late _RecordingSync sync;
 
-  Future<void> pumpPage(WidgetTester tester) async {
+  Future<void> pumpPage(
+    WidgetTester tester, {
+    AppSettings settings = const AppSettings(deviceId: 'me', deviceName: 'Me'),
+    Future<void> Function(DriftLocalStore store)? seed,
+  }) async {
     tester.view
       ..physicalSize = const Size(1120, 720)
       ..devicePixelRatio = 1;
@@ -66,14 +70,13 @@ void main() {
         _clip('c', '#2563eb', 3),
       ]),
     );
+    if (seed != null) await tester.runAsync(() => seed(DriftLocalStore(db)));
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           databaseProvider.overrideWithValue(db),
           settingsProvider.overrideWith(
-            () => SeededSettings(
-              const AppSettings(deviceId: 'me', deviceName: 'Me'),
-            ),
+            () => SeededSettings(settings),
           ),
           syncControllerProvider.overrideWith(() => sync = _RecordingSync()),
           deviceListProvider.overrideWith((ref) => Stream.value(const [])),
@@ -92,6 +95,41 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     await tester.runAsync(db.close);
   }
+
+  testWidgets('each clip says whether it reached the database', (tester) async {
+    await pumpPage(
+      tester,
+      settings: const AppSettings(
+        deviceId: 'me',
+        deviceName: 'Me',
+        backendId: 'supabase',
+      ),
+      seed: (store) async {
+        await store.capture(
+          ClipItem.create(
+            id: 'mine',
+            deviceId: 'me',
+            deviceName: 'Me',
+            type: ClipContentType.text,
+            content: 'not sent yet',
+            contentHash: sha256Hex('not sent yet'),
+            sizeBytes: 12,
+            now: DateTime.now().toUtc(),
+          ),
+        );
+      },
+    );
+    expect(find.byKey(const ValueKey('sync-inDatabase')), findsNWidgets(3));
+    expect(find.byKey(const ValueKey('sync-pending')), findsOneWidget);
+    expect(find.byTooltip('Waiting to sync to Supabase'), findsOneWidget);
+    await dispose(tester);
+  });
+
+  testWidgets('no sync marker without a database', (tester) async {
+    await pumpPage(tester);
+    expect(find.byKey(const ValueKey('sync-inDatabase')), findsNothing);
+    await dispose(tester);
+  });
 
   testWidgets('arrows select, Enter copies the selection', (tester) async {
     await pumpPage(tester);
