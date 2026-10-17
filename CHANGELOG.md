@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- *Remove device* can also delete every clip that device wrote, from the database and from every other device. The admin device signs these deletions, and devices accept a deletion of another device's clip only from a trusted admin.
 - **Sync marker on every clip.** With a database connected, each clip in the history shows a small cloud: *In Supabase* (sent from here or received from another device), *Waiting to sync*, or *Only on this device* (copied while database sync was off, the device was paused or receive-only, or before switching databases). Tap or hover it for the words; the clip preview says the same.
 
 ### Fixed
@@ -25,6 +26,7 @@ All notable changes to this project are documented here. Format follows
 - macOS showed *OS credential store unavailable* after connecting a database that has no password, such as Supabase with an anon key, although every credential was in the keychain. Clearing a credential the keychain never held failed there (the macOS file keychain answers with -34018 because the storage plugin also clears the iCloud copy), and the app retried that delete on every launch. A credential that is not in the keychain now counts as already deleted.
 
 ### Changed
+- **Removing or blocking a device now issues a fresh encryption key** to the remaining devices in an encrypted signed group, so a copy of the app that kept the old key and credentials cannot read what is copied afterwards. It used to take a separate *Rotate key*. Unblocking a device seals the current key to it.
 - The desktop tray moved to tray_manager 0.8, which drives the icon and menu through one native core on macOS, Windows and Linux. A hot restart no longer leaves a second tray icon behind. On Linux the tray icon is a StatusNotifierItem and no longer needs libayatana-appindicator: the deb now depends on `libx11-6` and `libxi6` instead, and building needs `libx11-dev` and `libxi-dev`.
 - Dependency updates: drift 2.35.2, drift_dev 2.35.1, shared_preferences 2.5.6, url_launcher 6.3.3, pocketbase 0.25.2, test 1.33.0, Gradle 9.8.0, and the pinned GitHub Actions (harden-runner 2.22.1, CodeQL 4.38.3, upload-artifact 7.0.2, download-artifact 8.0.2).
 

@@ -61,10 +61,10 @@ presence (online / last seen, platform, app version) and its membership.
 | Action | Effect |
 |---|---|
 | **Pause sync** | The device stays paired but sends and receives nothing from its next check-in (about a minute). Clips copied elsewhere while it is paused never reach it (nor those written in the minute or so before it noticed the pause), and what it copies meanwhile stays on it; its deletions and *Send to* clips still go out on resume. **Resume** brings it back. Paused devices still receive rotated passphrases. Cooperative like every status: a device on 0.4.2 or older reads `paused` as active and keeps syncing. |
-| **Block** | Other devices ignore its clips. The device stops syncing on its next check-in (about a minute), deletes its copy of the credentials and passphrase, and shows a notice. **Unblock** clears the status, but the device has to be paired again. |
+| **Block** | Other devices ignore its clips. The device stops syncing on its next check-in (about a minute), deletes its copy of the credentials and passphrase, and shows a notice. In an encrypted signed group the admin then issues a fresh key to the remaining devices, so a copy that kept the old key cannot read what is copied afterwards. **Unblock** clears the status and seals the current key to the device, but it has to be paired again if it already forgot the credentials. |
 | **Change role** | *Send & receive* (default), *Send only* (pushes its clips, never pulls history, like a guest laptop), *Receive only* (pulls, never pushes, like a display machine). Applied on the device's next check-in. |
 | **Access duration** | Sets `expires_at`. When it passes, the device disconnects itself the same way as a block, and other devices stop applying its clips. |
-| **Remove** | Like block, but permanent: the row stays as a tombstone so the device learns it was removed. |
+| **Remove** | Like block, including the fresh key, but permanent: the row stays as a tombstone so the device learns it was removed. With *Also delete its clips* the admin replaces every clip the device wrote with an empty deletion record, signed by the admin device, so the database no longer holds the ciphertext and every other device drops its copy. Devices accept such a deletion only when a trusted admin signed it. What the removed device itself already holds stays on it: nothing can recall data from a device that will not cooperate. |
 | **Forget** | Deletes the row. Use after the device has disconnected (or for unused invitations). A device that is still running notices the missing row and disconnects with "removed". |
 
 A device cannot manage itself; rename it under **This device**.
@@ -201,7 +201,8 @@ on) and *delete rows*, but cannot:
 | Un-block themselves after a genuine block | Editing the row breaks the signature → still untrusted; restoring the earlier valid row is a rollback (lower version) → still untrusted |
 | Give themselves the admin flag or a wider role | Same: unsigned change → untrusted |
 | Swap a device's key envelope for one holding a passphrase they chose | Ignored: the envelope is covered by the admin signature |
-| Keep an old copy of the app running after removal to read new clips | Rotate the key: they never receive the new version |
+| Keep an old copy of the app running after removal to read new clips | Removing or blocking rotates the key: they never receive the new version |
+| Delete other devices' clips by writing deletion records | Ignored unless a trusted admin device signed the deletion |
 | Pose as an existing device from a second machine (cloned id) | They lack the private signing key → nothing they send verifies |
 | Read clips that were sent to one specific device | Same as any other clip: needs the group key; targeted delivery is a routing hint, encryption is the secrecy |
 
