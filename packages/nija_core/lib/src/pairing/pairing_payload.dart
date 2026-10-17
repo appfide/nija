@@ -274,23 +274,8 @@ abstract final class PairingCodec {
 
   /// Argon2id parameters are deliberately heavier than `ClipCipher`'s: a
   /// pairing happens once, and the PIN space is small.
-  static Future<SecretKey> _deriveKey(String pin, List<int> salt) {
-    final argon = Argon2id(
-      memory: 64 * 1024, // KiB
-      parallelism: 1,
-      iterations: 3,
-      hashLength: 32,
-    );
-    // Domain-separate the salt so a PIN never derives a ClipCipher key.
-    final domainSalt = crypto.sha256.convert([
-      ...utf8.encode('nija-pair-v1|'),
-      ...salt,
-    ]).bytes;
-    return argon.deriveKey(
-      secretKey: SecretKey(utf8.encode(pin)),
-      nonce: domainSalt,
-    );
-  }
+  static Future<SecretKey> _deriveKey(String pin, List<int> salt) =>
+      pinKey(pin, salt, domain: 'nija-pair-v1|');
 
   static String _pad(String b64) => b64.length % 4 == 0
       ? b64
@@ -307,4 +292,26 @@ class PairingException implements Exception {
 
   @override
   String toString() => 'PairingException: $message';
+}
+
+/// Key derived from an 8-digit [pin] and [salt] with Argon2id (64 MiB,
+/// about a second), so trying every PIN against a copy of the ciphertext
+/// takes years. [domain] keeps uses apart: a PIN for one never derives the
+/// key of another, or a ClipCipher key.
+@internal
+Future<SecretKey> pinKey(String pin, List<int> salt, {required String domain}) {
+  final argon = Argon2id(
+    memory: 64 * 1024, // KiB
+    parallelism: 1,
+    iterations: 3,
+    hashLength: 32,
+  );
+  final domainSalt = crypto.sha256.convert([
+    ...utf8.encode(domain),
+    ...salt,
+  ]).bytes;
+  return argon.deriveKey(
+    secretKey: SecretKey(utf8.encode(pin)),
+    nonce: domainSalt,
+  );
 }

@@ -228,6 +228,14 @@ class SyncController extends Notifier<SyncStatus> {
   /// Pinned admin public key (base64), or `null`.
   String? get adminPublicKey => _trustedAdminPub;
 
+  /// Text of the QR code another device scans to check this group's admin
+  /// key, or `null` outside a signed group.
+  String? get adminQrText =>
+      _trustedAdminPub == null ? null : '$adminQrPrefix$_trustedAdminPub';
+
+  /// Prefix of [adminQrText].
+  static const String adminQrPrefix = 'NIJA-ADMIN1.';
+
   /// Fingerprint of the pinned admin key, or `null`.
   String? get adminFingerprint =>
       _trustedAdminPub == null ? null : keyFingerprint(_trustedAdminPub!);
@@ -895,6 +903,52 @@ class SyncController extends Notifier<SyncStatus> {
     await restart();
   }
 
+  /// Trusts the admin key waiting for a decision when [scanned] (the QR
+  /// shown on the admin device) holds exactly that key. Returns whether
+  /// it did.
+  Future<bool> trustAdminFromQr(String scanned) async {
+    final pending = ref.read(pendingTrustProvider);
+    final text = scanned.trim();
+    if (pending == null || !text.startsWith(adminQrPrefix)) return false;
+    if (text.substring(adminQrPrefix.length) != pending.adminPub) return false;
+    await trustAdmin(pending.adminPub);
+    return true;
+  }
+
+  /// Trusts the admin key waiting for a decision when [pin] opens the
+  /// one-time code its admin device offers. Returns whether it did.
+  Future<bool> trustAdminWithCode(String pin) async {
+    final pending = ref.read(pendingTrustProvider);
+    if (pending == null) return false;
+    if (!await _managed.adminCodeOpens(pending.adminPub, pin)) return false;
+    await trustAdmin(pending.adminPub);
+    return true;
+  }
+
+  /// Admin only: offers a new one-time code for other devices to check
+  /// this group's admin key, and returns it.
+  Future<String> issueAdminCode() async {
+    final pin = PairingCodec.generatePin();
+    await _managed.publishAdminCode(pin);
+    return pin;
+  }
+
+  /// Admin only: replaces the group admin key. The old key signs the
+  /// change, so other devices follow it on their next check-in without a
+  /// question. Returns whether the database kept that signed change; when
+  /// it did not, other devices ask for a code or QR instead.
+  Future<bool> changeAdminKey() async {
+    final s = ref.read(settingsProvider);
+    final repo = ref.read(settingsRepositoryProvider);
+    final next = await AdminKey.generate();
+    final kept = await _managed.rolloverAdmin(next);
+    await repo.saveAdminKey(s.backendScope, await next.encode());
+    await repo.saveTrustedAdminPub(s.backendScope, next.publicKey);
+    log.i('admin key changed to ${next.fingerprint}');
+    await restart();
+    return kept;
+  }
+
   /// Issues a new passphrase, [passphrase] or a random one, to every
   /// verified active device. Returns the new version.
   Future<int> rotatePassphrase({String? passphrase}) async {
@@ -1038,9 +1092,16 @@ class SyncController extends Notifier<SyncStatus> {
       logger: log.sync,
     );
     _engine = engine;
-    _trustSub = engine.trustRequests.listen(
-      (t) => ref.read(pendingTrustProvider.notifier).request = t,
-    );
+    _trustSub = engine.trustRequests.listen((t) {
+      if (t.vouched) {
+        // The admin device changed its key on purpose and the key this
+        // device trusts signed the change: follow it without asking.
+        log.i('following the admin key change made by ${t.adminDeviceName}');
+        unawaited(trustAdmin(t.adminPub));
+        return;
+      }
+      ref.read(pendingTrustProvider.notifier).request = t;
+    });
     _statusSub = engine.statusStream.listen((st) {
       state = st;
       if (st.phase == SyncPhase.revoked) {

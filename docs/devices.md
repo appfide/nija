@@ -92,6 +92,35 @@ reads it back, finds it missing, restores the previous signed row and
 reports the upgrade to run, so a device is never left with a broken
 signature. CouchDB, Firestore and MongoDB need nothing.
 
+### When the admin key changes
+
+Every device pins the group's admin key when it joins and trusts only rows
+that key signed. A change of that key therefore has to be proven to each
+device; the database alone can never tell it to trust a new one, because
+anyone with the database credentials could write that.
+
+- **Change admin key** (Settings → Devices, admin only) makes a new key and
+  signs every row again with it. The old key signs a link to the new one,
+  stored in the `admin_envelope` field of the admin's own row (empty there
+  otherwise). Other devices verify the link against the key they trust and
+  switch on their next check-in without a question; links chain, so a
+  device that was offline through several changes still follows them.
+  Other admin devices receive the new key sealed to them.
+- **When the old key is lost** (the admin device was reset and secured the
+  group again), nothing can sign that link. Each other device then says
+  *This group's admin key changed* and stops syncing until it is checked:
+  on the admin device open **Check admin key**, then on the other device
+  either **scan the QR code** (it holds the full admin key) or **type the
+  one-time code**. The code is 8 digits and valid for 10 minutes; the admin
+  device stores the new key sealed under it with Argon2id, so a copy of the
+  database does not reveal it and a replaced copy does not open with the
+  digits shown on the admin device. Comparing the fingerprint by eye stays
+  available as a last resort.
+
+After a check the device forgets what it knew under the old key (including
+an admin key it held, which no longer signs anything) and reads the group
+again from the start, so the clips it skipped meanwhile arrive.
+
 ### Leaving a group, or starting a new one
 
 - **Settings → Devices → Leave this group** deletes this device's row,
@@ -215,6 +244,8 @@ What the model does **not** cover:
 - **Trust on first use**: a member of a legacy group that sees a new admin
   key is asked to compare the fingerprint with the admin device. Accepting
   a fingerprint you did not check hands the group to whoever wrote that row.
+  The same holds for the fingerprint fallback after a lost admin key; the
+  QR code and the one-time code avoid it.
 - **Deletion and denial of service**: database credentials still allow
   deleting or overwriting rows. Signatures make tampering detectable, not
   impossible. Use the backend's own access rules to limit that.
@@ -258,6 +289,7 @@ because it silently drops unknown ones.
 | `status`, `role`, `expires_at` | admin | yes |
 | `paired_by` | host at invitation | no |
 | `admin`, `admin_pub` | admin | yes |
+| `permissions`, `admin_envelope` | admin (grants; on the admin's own row, the admin key notice) | yes |
 | `membership_version`, `membership_sig` | admin | version yes; sig is the signature |
 | `key_version`, `key_envelope` | admin (invite / rotate) | yes |
 

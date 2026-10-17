@@ -346,6 +346,94 @@ void main() {
     },
   );
 
+  Future<(_Node, _Node)> pairedGroup(MemoryStore shared) async {
+    final host = await _boot(_host.copyWith(encryptionEnabled: false), shared);
+    await host.sync.start();
+    await host.sync.secureNewGroup();
+    final session = await host.sync.createPairing(
+      role: DeviceRole.full,
+      includePassphrase: true,
+    );
+    final joiner = await _boot(
+      const AppSettings(deviceId: 'j', deviceName: 'Phone', onboarded: true),
+      shared,
+    );
+    await joiner.sync.start();
+    await joiner.sync.joinFromPairing(
+      await PairingCodec.open(session.code, session.pin),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    return (host, joiner);
+  }
+
+  test('a planned admin key change is followed without a question', () async {
+    final shared = MemoryStore();
+    final (host, joiner) = await pairedGroup(shared);
+    expect(await host.sync.changeAdminKey(), isTrue);
+    final newPub = host.sync.adminPublicKey!;
+
+    await joiner.sync.refreshDevices();
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    expect(joiner.c.read(pendingTrustProvider), isNull);
+    expect(joiner.sync.adminPublicKey, newPub);
+    expect(joiner.status.selfVerified, isTrue);
+
+    await host.c
+        .read(localStoreProvider)
+        .capture(_clip('after the change', device: 'host-id'));
+    await host.sync.syncNow();
+    await joiner.sync.syncNow();
+    expect(await _history(joiner), contains('after the change'));
+    await joiner.dispose();
+    await host.dispose();
+  });
+
+  test(
+    'after a lost admin key a member checks the new one by code or QR',
+    () async {
+      final shared = MemoryStore();
+      final (host, joiner) = await pairedGroup(shared);
+      final scope = host.c.read(settingsProvider).backendScope;
+      await host.c.read(settingsRepositoryProvider).clearGroupTrust(scope);
+      await host.sync.restart();
+      await host.sync.secureGroup();
+      await host.sync.rotatePassphrase();
+      final pin = await host.sync.issueAdminCode();
+
+      await joiner.sync.refreshDevices();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(joiner.c.read(pendingTrustProvider)?.vouched, isFalse);
+      expect(await joiner.sync.trustAdminWithCode('00000000'), isFalse);
+      expect(
+        await joiner.sync.trustAdminFromQr('NIJA-ADMIN1.someone-else'),
+        isFalse,
+      );
+      expect(await joiner.sync.trustAdminWithCode(pin), isTrue);
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(joiner.sync.adminPublicKey, host.sync.adminPublicKey);
+      expect(joiner.status.selfVerified, isTrue);
+      expect(joiner.c.read(pendingTrustProvider), isNull);
+      await joiner.dispose();
+      await host.dispose();
+    },
+  );
+
+  test('the admin QR code proves the new key too', () async {
+    final shared = MemoryStore();
+    final (host, joiner) = await pairedGroup(shared);
+    final scope = host.c.read(settingsProvider).backendScope;
+    await host.c.read(settingsRepositoryProvider).clearGroupTrust(scope);
+    await host.sync.restart();
+    await host.sync.secureGroup();
+    await joiner.sync.refreshDevices();
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(await joiner.sync.trustAdminFromQr(host.sync.adminQrText!), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(joiner.status.selfVerified, isTrue);
+    await joiner.dispose();
+    await host.dispose();
+  });
+
   test('trusting an admin that started over brings a member back', () async {
     final shared = MemoryStore();
     final host = await _boot(_host.copyWith(encryptionEnabled: false), shared);

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:nija/features/devices/admin_check.dart';
 import 'package:nija/features/sync/sync_controller.dart';
 import 'package:nija/providers.dart';
 import 'package:nija/ui/app_theme.dart';
@@ -58,7 +59,11 @@ class AppShell extends ConsumerWidget {
       })
       ..listen<PendingTrust?>(pendingTrustProvider, (prev, next) {
         if (next == null || prev?.adminPub == next.adminPub) return;
-        unawaited(_showTrust(context, ref, next));
+        unawaited(
+          next.replacesPinned
+              ? reviewAdminChange(context, ref, next)
+              : _showTrust(context, ref, next),
+        );
       });
     final location = GoRouterState.of(context).uri.path;
     final index = _indexOf(location);
@@ -187,11 +192,7 @@ Future<void> _showTrust(
     builder: (ctx) => AlertDialog(
       key: const ValueKey('trust-dialog'),
       icon: Icon(Icons.shield_rounded, color: theme.colorScheme.primary),
-      title: Text(
-        t.replacesPinned
-            ? "This group's admin key changed"
-            : 'This group is now managed',
-      ),
+      title: const Text('This group is now managed'),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 440),
         child: Column(
@@ -199,15 +200,9 @@ Future<void> _showTrust(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              t.replacesPinned
-                  ? '${t.adminDeviceName.isEmpty ? 'A device' : t.adminDeviceName} now signs this group with a different admin key from the one this device trusts. '
-                        'Until you trust it, this device sends nothing and cannot read the other devices. '
-                        'This happens when the admin device lost its keys and secured the group again. '
-                        'Open Settings → Devices on that device and compare the fingerprint. '
-                        'If it does not match, do not trust: someone with your database credentials may be trying to take over the group.'
-                  : '${t.adminDeviceName.isEmpty ? 'A device' : t.adminDeviceName} secured this sync group with an admin key. '
-                        'Open Settings → Devices on that device and compare the fingerprint before trusting it. '
-                        'If it does not match, do not trust: someone with your database credentials may be trying to take over the group.',
+              '${t.adminDeviceName.isEmpty ? 'A device' : t.adminDeviceName} secured this sync group with an admin key. '
+              'Open Settings → Devices on that device and compare the fingerprint before trusting it. '
+              'If it does not match, do not trust: someone with your database credentials may be trying to take over the group.',
             ),
             const SizedBox(height: 16),
             Center(

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:nija/features/devices/admin_check.dart';
 import 'package:nija/features/devices/device_widgets.dart';
 import 'package:nija/features/sync/sync_controller.dart';
 import 'package:nija/providers.dart';
@@ -190,6 +191,28 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
     );
   }
 
+  Future<void> _changeAdminKey() async {
+    final ok = await confirm(
+      context,
+      title: 'Change the admin key?',
+      message:
+          'This device makes a new admin key and signs every device again with it. The current key signs the change, so the other devices switch on their next check-in without a question. Devices that are offline switch when they come back. Other admin devices receive the new key sealed to them.',
+      action: 'Change key',
+    );
+    if (!ok) return;
+    await _run(() async {
+      final kept = await ref
+          .read(syncControllerProvider.notifier)
+          .changeAdminKey();
+      _toast(
+        kept
+            ? 'Admin key changed. Other devices follow on their next check-in.'
+            : 'Admin key changed, but the database did not keep the signed change. '
+                  'Each device will ask to check the new key: use Check admin key.',
+      );
+    }, '');
+  }
+
   Future<void> _rotate() async {
     final ok = await confirm(
       context,
@@ -327,6 +350,17 @@ class _DevicesPageState extends ConsumerState<DevicesPage> {
                       busy: _busy || !connected,
                       onSecure: _secure,
                       onRotate: _rotate,
+                      onCheck: () => unawaited(showAdminCheck(context, ref)),
+                      onChangeKey: _changeAdminKey,
+                      onReview: ref.watch(pendingTrustProvider) == null
+                          ? null
+                          : () => unawaited(
+                              reviewAdminChange(
+                                context,
+                                ref,
+                                ref.read(pendingTrustProvider)!,
+                              ),
+                            ),
                     ),
                     SectionCard(
                       title: 'In this group',
@@ -388,6 +422,9 @@ class _SecurityCard extends StatelessWidget {
     required this.busy,
     required this.onSecure,
     required this.onRotate,
+    required this.onCheck,
+    required this.onChangeKey,
+    required this.onReview,
   });
   final bool signed;
   final bool isAdmin;
@@ -399,6 +436,11 @@ class _SecurityCard extends StatelessWidget {
   final bool busy;
   final VoidCallback onSecure;
   final VoidCallback onRotate;
+  final VoidCallback onCheck;
+  final VoidCallback onChangeKey;
+
+  /// Set while another admin key waits for this device to check it.
+  final VoidCallback? onReview;
 
   @override
   Widget build(BuildContext context) {
@@ -417,6 +459,8 @@ class _SecurityCard extends StatelessWidget {
         ? 'Managed by ${adminName ?? 'the admin device'} · key ${fingerprint ?? ''}'
               '${isAdmin ? ' · this device is an admin' : ''}'
               '${encryption ? ' · encryption key v$keyVersion' : ''}'
+        : onReview != null
+        ? 'The admin key changed. Until you check the new one, this device sends nothing and cannot read the other devices.'
         : 'Other devices ignore this device’s clips until the admin re-adds it with a new pairing code.';
     return SectionCard(
       title: 'Group security',
@@ -448,17 +492,42 @@ class _SecurityCard extends StatelessWidget {
               ),
             ),
           ),
-        if (signed && isAdmin && encryption)
+        if (signed && (isAdmin || onReview != null))
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: OutlinedButton.icon(
-                key: const ValueKey('rotate-key'),
-                onPressed: busy ? null : onRotate,
-                icon: const Icon(Icons.autorenew_rounded, size: 18),
-                label: const Text('Rotate encryption key'),
-              ),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (onReview != null)
+                  FilledButton.icon(
+                    key: const ValueKey('review-admin-key'),
+                    onPressed: onReview,
+                    icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+                    label: const Text('Check new admin key'),
+                  ),
+                if (isAdmin) ...[
+                  OutlinedButton.icon(
+                    key: const ValueKey('check-admin-key'),
+                    onPressed: busy ? null : onCheck,
+                    icon: const Icon(Icons.qr_code_rounded, size: 18),
+                    label: const Text('Check admin key'),
+                  ),
+                  if (encryption)
+                    OutlinedButton.icon(
+                      key: const ValueKey('rotate-key'),
+                      onPressed: busy ? null : onRotate,
+                      icon: const Icon(Icons.autorenew_rounded, size: 18),
+                      label: const Text('Rotate encryption key'),
+                    ),
+                  OutlinedButton.icon(
+                    key: const ValueKey('change-admin-key'),
+                    onPressed: busy ? null : onChangeKey,
+                    icon: const Icon(Icons.key_rounded, size: 18),
+                    label: const Text('Change admin key'),
+                  ),
+                ],
+              ],
             ),
           ),
       ],

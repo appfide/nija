@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:clock/clock.dart';
 import 'package:nija_core/src/backend/sync_backend.dart';
+import 'package:nija_core/src/crypto/admin_notice.dart';
 import 'package:nija_core/src/crypto/cipher_ring.dart';
 import 'package:nija_core/src/crypto/clip_cipher.dart';
 import 'package:nija_core/src/crypto/clip_signing.dart';
@@ -36,6 +37,7 @@ class PendingTrust {
     required this.adminPub,
     required this.adminDeviceName,
     this.replacesPinned = false,
+    this.vouched = false,
   });
 
   /// Admin public key, base64.
@@ -49,6 +51,11 @@ class PendingTrust {
   /// admin device lost its key and secured the group again, or someone
   /// with database access is trying to take it over.
   final bool replacesPinned;
+
+  /// The admin device published a chain of changes, each signed by the key
+  /// it replaced, from the key this device trusts to [adminPub]: a planned
+  /// change the app follows without asking.
+  final bool vouched;
 
   /// Comparable fingerprint.
   String get fingerprint => keyFingerprint(adminPub);
@@ -769,6 +776,88 @@ class SyncEngine {
     Set<DevicePermission> permissions,
   ) => _patchGrant(id, (d) => d.copyWith(permissions: {...permissions}));
 
+  /// Admin only: replaces the group admin key with [next]. Every row is
+  /// signed again with [next]; this device's own row carries a link signed
+  /// by the current key, which other devices follow without asking, and
+  /// every other active admin gets [next] sealed to it. Returns whether the
+  /// database kept the link (a schema without the 0.5 grant columns drops
+  /// it, and devices then ask for the one-time code instead). The caller
+  /// stores [next] and restarts the engine with it.
+  Future<bool> rolloverAdmin(AdminKey next) async {
+    final old = adminKey;
+    if (!isSignedGroup || old == null) {
+      throw StateError('Only the admin of a signed group can change its key');
+    }
+    final link = await AdminLink.create(old, next.publicKey);
+    for (final d in await _backend.listDevices()) {
+      var row = d;
+      if (d.id == _device.id) {
+        final notice =
+            (AdminNotice.tryDecode(d.adminEnvelope) ?? const AdminNotice())
+                .withLink(link)
+                .withCode(null);
+        row = d.copyWith(adminEnvelope: notice.encode());
+      } else if (d.admin &&
+          d.boxPub != null &&
+          d.status == DeviceStatus.active) {
+        final env = await KeyEnvelope.seal(
+          passphrase: await next.encode(),
+          version: 0,
+          recipientBoxPub: d.boxPub!,
+        );
+        row = d.copyWith(adminEnvelope: env.encode());
+      }
+      await _backend.updateDevice(await ClipSigning.signMembership(row, next));
+    }
+    final mine = (await _backend.listDevices())
+        .where((d) => d.id == _device.id)
+        .firstOrNull;
+    final kept = AdminNotice.tryDecode(mine?.adminEnvelope) != null;
+    _log(
+      'admin key changed to ${next.fingerprint}${kept ? '' : ' (no link stored)'}',
+    );
+    return kept;
+  }
+
+  /// Admin only: offers a one-time [pin] for [AdminCode.validFor], so a
+  /// device that cannot follow a signed change (the old key was lost) can
+  /// check the admin key against what this device shows.
+  Future<void> publishAdminCode(String pin) async {
+    final admin = adminKey;
+    if (!isSignedGroup || admin == null) {
+      throw StateError('Only the admin of a signed group can offer a code');
+    }
+    final code = await AdminCode.seal(
+      admin.publicKey,
+      pin,
+      until: clock.now().toUtc().add(AdminCode.validFor),
+    );
+    await _patchGrant(
+      _device.id,
+      (d) => d.copyWith(
+        adminEnvelope:
+            (AdminNotice.tryDecode(d.adminEnvelope) ?? const AdminNotice())
+                .withCode(code)
+                .encode(),
+      ),
+    );
+  }
+
+  /// Whether [pin] opens the code an admin device signed with [adminPub]
+  /// offers, and it seals [adminPub] itself.
+  Future<bool> adminCodeOpens(String adminPub, String pin) async {
+    final now = clock.now().toUtc();
+    for (final d in await _backend.listDevices()) {
+      if (!d.admin || d.adminPub != adminPub) continue;
+      if (!await ClipSigning.verifyMembership(d, adminPub)) continue;
+      final code = AdminNotice.tryDecode(d.adminEnvelope)?.code;
+      if (code != null && await code.open(pin, now: now) == adminPub) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Makes [id] an admin: seals the admin key to its box key and flags the
   /// row. The device installs the key on its next check-in. There is no
   /// undo: the device keeps the key, and only a new admin key (securing the
@@ -1246,25 +1335,42 @@ class SyncEngine {
       // Signed group whose own row now carries another admin key's valid
       // signature. Until the user trusts it this device can neither obey
       // its row nor open the key sealed in it, so ask instead of going
-      // quiet.
+      // quiet, unless the old key signed the change.
       final otherAdmin = me.adminPub;
+      final pinned = trustedAdminPub;
       if (isSignedGroup &&
           !selfVerified &&
+          pinned != null &&
           otherAdmin != null &&
-          otherAdmin != trustedAdminPub &&
+          otherAdmin != pinned &&
           otherAdmin != _lastTrustPrompt &&
           await ClipSigning.verifyMembership(me, otherAdmin)) {
         _lastTrustPrompt = otherAdmin;
-        final by = list
-            .where((d) => d.id != me!.id && d.admin && d.adminPub == otherAdmin)
-            .firstOrNull;
-        _log('own row is signed by another admin key; asking to trust it');
+        Device? by;
+        var vouched = false;
+        for (final d in list) {
+          if (d.id == me.id || !d.admin || d.adminPub != otherAdmin) continue;
+          if (!await ClipSigning.verifyMembership(d, otherAdmin)) continue;
+          by ??= d;
+          final notice = AdminNotice.tryDecode(d.adminEnvelope);
+          if (notice != null && await notice.leadsFrom(pinned, otherAdmin)) {
+            by = d;
+            vouched = true;
+            break;
+          }
+        }
+        _log(
+          vouched
+              ? 'the admin key changed and the old key signed the change'
+              : 'own row is signed by another admin key; asking to trust it',
+        );
         if (!_trustCtl.isClosed) {
           _trustCtl.add(
             PendingTrust(
               adminPub: otherAdmin,
               adminDeviceName: by?.name ?? '',
               replacesPinned: true,
+              vouched: vouched,
             ),
           );
         }
@@ -1351,6 +1457,7 @@ class SyncEngine {
     final env = me.adminEnvelope;
     final keys = identity;
     if (!me.admin || env == null || keys == null || adminKey != null) return;
+    if (env.startsWith(AdminNotice.prefix)) return; // published, not sealed
     try {
       final envelope = KeyEnvelope.decode(env);
       if (envelope.version != 0) return;

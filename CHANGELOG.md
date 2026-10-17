@@ -7,6 +7,8 @@ All notable changes to this project are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- **Checking a new admin key by QR code or one-time code.** When the admin device lost its key and secured the group again, each other device now asks to scan the QR code from *Settings → Devices → Check admin key* on the admin device, or to type the 8-digit code shown there (valid 10 minutes). Comparing the fingerprint by eye is still possible but no longer the main path.
+- **Change admin key** (*Settings → Devices*, admin only). The old key signs the change, so the other devices follow it on their next check-in without asking; devices that missed several changes follow the chain. Other admin devices receive the new key.
 - *Remove device* can also delete every clip that device wrote, from the database and from every other device. The admin device signs these deletions, and devices accept a deletion of another device's clip only from a trusted admin.
 - **Sync marker on every clip.** With a database connected, each clip in the history shows a small cloud: *In Supabase* (sent from here or received from another device), *Waiting to sync*, or *Only on this device* (copied while database sync was off, the device was paused or receive-only, or before switching databases). Tap or hover it for the words; the clip preview says the same.
 
