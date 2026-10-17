@@ -868,6 +868,82 @@ void main() {
       expect(admin.received, contains('from the member'));
     });
 
+    test('a planned change signed by the old key needs no question', () async {
+      final next = await AdminKey.generate();
+      expect(await admin.engine!.rolloverAdmin(next), isTrue);
+      await member.engine!.refreshDevices();
+      expect(member.trustPrompts.single.adminPub, next.publicKey);
+      expect(member.trustPrompts.single.vouched, isTrue);
+
+      // A device that missed two changes still follows the chain.
+      await admin.engine!.dispose();
+      admin = await Node.create(shared, 'A', 'Admin laptop', keys: admin.keys);
+      await admin.start(
+        adminKey: next,
+        trustedAdminPub: next.publicKey,
+        assumeRegistered: true,
+      );
+      final third = await AdminKey.generate();
+      await admin.engine!.rolloverAdmin(third);
+      await member.engine!.dispose();
+      member = await Node.create(shared, 'B', 'Phone', keys: member.keys)
+        ..passphrases.addAll(member.passphrases);
+      await member.start(
+        trustedAdminPub: adminKey.publicKey,
+        assumeRegistered: true,
+      );
+      expect(member.trustPrompts.single.adminPub, third.publicKey);
+      expect(member.trustPrompts.single.vouched, isTrue);
+    });
+
+    test('a change the old key did not sign is not followed', () async {
+      // Someone with database access signs every row with their own key
+      // and adds a link that claims to come from the trusted key.
+      final mallory = await AdminKey.generate();
+      final forged = AdminLink(
+        from: adminKey.publicKey,
+        to: mallory.publicKey,
+        sig: await mallory.sign([1, 2, 3]),
+      );
+      atk.setRow(
+        await ClipSigning.signMembership(
+          atk
+              .row('A')
+              .copyWith(
+                adminEnvelope: AdminNotice(links: [forged]).encode(),
+              ),
+          mallory,
+        ),
+      );
+      atk.setRow(await ClipSigning.signMembership(atk.row('B'), mallory));
+      await member.engine!.refreshDevices();
+      expect(member.trustPrompts.single.vouched, isFalse);
+    });
+
+    test('a one-time code proves a new admin key', () async {
+      // The admin lost its key and secured the group again.
+      await admin.stop();
+      final newKey = await AdminKey.generate();
+      admin = await Node.create(shared, 'A', 'Admin laptop', keys: admin.keys);
+      await admin.start(
+        adminKey: newKey,
+        trustedAdminPub: newKey.publicKey,
+        passphrases: {1: pass1},
+        assumeRegistered: true,
+      );
+      await admin.engine!.secureGroup();
+      await admin.engine!.publishAdminCode('12345678');
+
+      await member.engine!.refreshDevices();
+      expect(member.trustPrompts.single.vouched, isFalse);
+      final e = member.engine!;
+      expect(await e.adminCodeOpens(newKey.publicKey, '1234 5678'), isTrue);
+      expect(await e.adminCodeOpens(newKey.publicKey, '87654321'), isFalse);
+      // The code belongs to that key only.
+      final other = await AdminKey.generate();
+      expect(await e.adminCodeOpens(other.publicKey, '12345678'), isFalse);
+    });
+
     test('an unsigned or forged row does not prompt', () async {
       final forger = await AdminKey.generate();
       final row = atk.row('B');
@@ -1044,6 +1120,24 @@ void main() {
         await ClipSigning.verifyMembership(reread, admin.publicKey),
         isTrue,
       );
+    });
+
+    test('a one-time admin code expires', () async {
+      final now = DateTime.utc(2026, 10, 18, 12);
+      final code = await AdminCode.seal(
+        'pub',
+        '11112222',
+        until: now.add(AdminCode.validFor),
+      );
+      final back = AdminNotice.tryDecode(
+        AdminNotice(code: code).encode(),
+      )!.code!;
+      expect(await back.open('11112222', now: now), 'pub');
+      expect(
+        await back.open('11112222', now: now.add(const Duration(minutes: 11))),
+        isNull,
+      );
+      expect(AdminNotice.tryDecode('not a notice'), isNull);
     });
 
     test('envelope opens only for the recipient', () async {
