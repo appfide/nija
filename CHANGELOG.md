@@ -29,7 +29,7 @@ All notable changes to this project are documented here. Format follows
 
 ### Changed
 - App Store builds now show *Get it on your other devices* too, listing the Windows, Linux and Android installers and a link to every release on GitHub. The macOS and iOS installers and the update notice stay hidden there, since the App Store covers those.
-- The iOS and macOS apps carry a privacy manifest (no tracking, no data collected) and declare their use of standard encryption for export compliance.
+- The iOS and macOS apps carry a privacy manifest (no tracking, no data collected) and state for export compliance that their encryption is exempt: standard algorithms in publicly available open-source code.
 - [PRIVACY.md](PRIVACY.md) is Nija's own privacy policy, and the README has a quick start for each database.
 - macOS release notarization can sign in with an App Store Connect API key (`APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_KEY_P8`) instead of an Apple ID and app-specific password.
 - **Removing or blocking a device now issues a fresh encryption key** to the remaining devices in an encrypted signed group, so a copy of the app that kept the old key and credentials cannot read what is copied afterwards. It used to take a separate *Rotate key*. Unblocking a device seals the current key to it.
