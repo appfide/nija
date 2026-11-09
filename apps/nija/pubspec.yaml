@@ -22,7 +22,7 @@ dependencies:
   hotkey_manager: ^0.2.3
   intl: ^0.20.2
   logger: ^2.8.0
-  mobile_scanner: ^7.4.2
+  mobile_scanner: ^7.5.0
   nija_core:
     path: ../../packages/nija_core
   pasteboard: ^0.5.0
