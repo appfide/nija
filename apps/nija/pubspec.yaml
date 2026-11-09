@@ -35,7 +35,7 @@ dependencies:
   uuid: ^4.6.0
   win32: ^6.4.0
   win32_registry: ^3.0.3
-  window_manager: ^0.5.2
+  window_manager: ^0.6.0
 
 dev_dependencies:
   build_runner: ^2.15.1
