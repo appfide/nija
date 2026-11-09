@@ -30,7 +30,7 @@ dependencies:
   path_provider: ^2.1.6
   qr_flutter: ^4.1.0
   shared_preferences: ^2.5.6
-  tray_manager: ^0.8.0
+  tray_manager: ^0.8.3
   url_launcher: ^6.3.3
   uuid: ^4.6.0
   win32: ^6.4.0
